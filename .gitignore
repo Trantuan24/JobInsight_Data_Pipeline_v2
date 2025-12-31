@@ -89,6 +89,7 @@ results/**/*
 *.log
 logs/**/*
 !logs/**/.gitkeep
+!logs/README.md
 
 ### IDE Files ###
 # Visual Studio Code
@@ -120,6 +121,23 @@ Desktop.ini
 ### Docker ###
 .docker/
 docker-compose.override.yml
+
+### Plugins ###
+# Loại trừ các plugin cache nhưng giữ lại README
+plugins/**/__pycache__/
+plugins/**/*.pyc
+!plugins/README.md
+
+### Scripts ###
+# Giữ lại scripts nhưng loại trừ các file tạm thời
+scripts/**/__pycache__/
+scripts/**/*.pyc
+
+### JobInsight_Data_Pipeline ###
+# Thư mục cấu hình bổ sung - giữ lại cấu trúc
+JobInsight_Data_Pipeline/**/__pycache__/
+JobInsight_Data_Pipeline/**/*.pyc
+!JobInsight_Data_Pipeline/README.md
 
 ### Testing Files ###
 # Unit test / coverage reports
