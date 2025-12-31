@@ -1,0 +1,189 @@
+x-airflow-common: &airflow-common
+  # Build từ Dockerfile để cài đặt Playwright và dependencies
+  # image: apache/airflow:2.7.1
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho="
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "10"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
+    # Thêm cấu hình múi giờ Việt Nam
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: "Asia/Ho_Chi_Minh"
+    # yamllint disable rule:line-length
+    # Use simple http server on scheduler for health checks
+    # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
+    # yamllint enable rule:line-length
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 4
+    AIRFLOW__WEBSERVER__SESSION_BACKEND: "database"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "jobinsight_secret_key_01234567890"
+    # Cấu hình logging để tránh lỗi 403 với log server
+    AIRFLOW__LOGGING__REMOTE_LOGGING: "false"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO"
+    AIRFLOW__LOGGING__TASK_LOG_READER: "task"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__WEBSERVER__HOSTNAME_CALLABLE: "socket:getfqdn"
+    AIRFLOW__LOGGING__BASE_LOG_FOLDER: "/opt/airflow/logs"
+    # Load environment variables from .env file
+    DB_HOST: ${DB_HOST}
+    DB_PORT: ${DB_PORT}
+    DB_USER: ${DB_USER}
+    DB_PASSWORD: ${DB_PASSWORD}
+    DB_NAME: ${DB_NAME}
+    DUCKDB_PATH: ${DUCKDB_PATH}
+    MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    # The following line can be used to set a custom config file, stored in the local config folder
+    # If you want to use it, outcomment it and replace airflow.cfg with the name of your config file
+    # AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs:rw,z
+    - ./plugins:/opt/airflow/plugins
+    - ./src:/opt/airflow/src
+    - ./sql:/opt/airflow/sql
+    - ./data:/opt/airflow/data
+  # Sử dụng user airflow mặc định thay vì chỉ định UID
+  # user: "1000:0"
+  networks:
+    - jobinsight_network
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+services:
+  # ============================================
+  # MinIO Object Storage
+  # ============================================
+  minio:
+    image: minio/minio:latest
+    container_name: jobinsight_minio
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+    networks:
+      - jobinsight_network
+
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+      # Thêm biến môi trường cho việc tạo database và user jobinsight
+      POSTGRES_JOBINSIGHT_DB: jobinsight
+      POSTGRES_JOBINSIGHT_USER: jobinsight
+      POSTGRES_JOBINSIGHT_PASSWORD: jobinsight
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+      - ./docker/init-scripts/postgres-init.sql:/docker-entrypoint-initdb.d/00-postgres-init.sql
+      - ./sql/schemas:/docker-entrypoint-initdb.d/schemas
+      - ./sql/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./sql/procedures:/docker-entrypoint-initdb.d/procedures
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - jobinsight_network
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: airflow webserver
+    ports:
+      - 8080:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: airflow scheduler
+    environment:
+      <<: *airflow-common-env
+      PYTHONPATH: "/opt/airflow"
+      AIRFLOW__SCHEDULER__PRINT_STATS_INTERVAL: "30"
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true && \
+        python -c "from src.storage.minio import init_minio_buckets; init_minio_buckets()"
+    restart: on-failure
+    depends_on:
+      - minio
+      - postgres
+
+  # ============================================
+  # Health Check API (Optional - Uncomment to enable)
+  # ============================================
+  # health-api:
+  #   <<: *airflow-common
+  #   command: python -m src.monitoring.health
+  #   ports:
+  #     - "5000:5000"
+  #   depends_on:
+  #     - postgres
+  #     - minio
+  #   restart: always
+
+volumes:
+  postgres-db-volume:
+  minio-data:
+
+networks:
+  jobinsight_network:
+    driver: bridge
