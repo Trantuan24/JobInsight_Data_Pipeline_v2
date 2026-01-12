@@ -1,0 +1,115 @@
+Project jobinsight_warehouse {
+  database_type: "DuckDB"
+  note: "Star schema for JobInsight Data Warehouse, stored on MinIO"
+}
+
+// =============================================
+// DIMENSION TABLES
+// =============================================
+
+Table dim_job {
+  job_sk int [pk, note: "Surrogate key"]
+  job_id varchar(20) [not null, note: "Business key từ TopCV"]
+  title varchar(255)
+  job_url text
+  skills json
+  effective_date date [not null, note: "SCD2 start date"]
+  expiry_date date [note: "SCD2 end date (NULL = current)"]
+  is_current boolean [default: true, note: "SCD2 current record"]
+
+  Indexes {
+    (job_id) [unique, name: "uq_dimjob_current", note: "Unique where is_current = TRUE"]
+  }
+
+  note: "SCD Type 2 - Job postings dimension"
+}
+
+Table dim_company {
+  company_sk int [pk, note: "Surrogate key"]
+  company_bk_hash varchar(64) [not null, note: "MD5(lower(company_name)) - Business key"]
+  company_name varchar(200) [not null]
+  company_url text
+  logo_url text
+  verified_employer boolean [default: false]
+  effective_date date [not null, note: "SCD2 start date"]
+  expiry_date date [note: "SCD2 end date (NULL = current)"]
+  is_current boolean [default: true, note: "SCD2 current record"]
+
+  Indexes {
+    (company_bk_hash) [unique, name: "uq_dimcompany_current", note: "Unique where is_current = TRUE"]
+  }
+
+  note: "SCD Type 2 - Companies dimension"
+}
+
+Table dim_location {
+  location_sk int [pk, note: "Surrogate key (-1 = Unknown)"]
+  city varchar(100) [not null]
+  country varchar(50) [default: "Vietnam"]
+
+  Indexes {
+    (city, country) [unique]
+  }
+
+  note: "Locations dimension - City level only"
+}
+
+Table dim_date {
+  date_id date [pk, note: "Natural key"]
+  day int [not null]
+  month int [not null]
+  quarter int [not null]
+  year int [not null]
+  week_of_year int [not null]
+  day_of_week int [not null, note: "1=Mon, 7=Sun"]
+  weekday_name varchar(10) [not null]
+  is_weekend boolean [not null]
+  year_month varchar(7) [not null, note: "YYYY-MM"]
+  quarter_name varchar(2) [not null, note: "Q1-Q4"]
+
+  note: "Date dimension - Data-driven range"
+}
+
+// =============================================
+// FACT TABLES
+// =============================================
+
+Table fact_job_posting_daily {
+  fact_id int [pk, note: "Surrogate key"]
+  job_sk int [not null, ref: > dim_job.job_sk]
+  company_sk int [not null, ref: > dim_company.company_sk]
+  date_id date [not null, ref: > dim_date.date_id]
+  is_observed boolean [not null, note: "TRUE = crawled, FALSE = projected"]
+  posted_date_id date [ref: > dim_date.date_id]
+  due_date_id date [ref: > dim_date.date_id]
+  salary_min numeric
+  salary_max numeric
+  salary_type varchar(20) [note: "range, upto, from, negotiable"]
+  time_remaining text
+  posted_time timestamp [note: "Precision: seconds"]
+  due_date timestamp [note: "Precision: seconds"]
+  crawled_at timestamp [not null, note: "Precision: seconds"]
+  load_month varchar(7) [not null, note: "Partition key YYYY-MM"]
+
+  Indexes {
+    (job_sk, date_id) [unique, name: "uq_fact_job_date"]
+    (date_id) [name: "idx_fact_date"]
+    (load_month) [name: "idx_fact_load_month"]
+  }
+
+  note: "Grain: 1 job × 1 day (5 days: 1 observed + 4 projected)"
+}
+
+Table fact_job_location_bridge {
+  bridge_id int [pk, note: "Surrogate key"]
+  fact_id int [not null, ref: > fact_job_posting_daily.fact_id]
+  location_sk int [not null, ref: > dim_location.location_sk]
+
+  Indexes {
+    (fact_id, location_sk) [unique, name: "uq_bridge"]
+    (fact_id) [name: "idx_bridge_fact"]
+    (location_sk) [name: "idx_bridge_location"]
+  }
+
+  note: "Bridge table - Many-to-many (1 job can have multiple locations)"
+}
