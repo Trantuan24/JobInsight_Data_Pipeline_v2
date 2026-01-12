@@ -3,184 +3,186 @@
 -- ============================================
 -- Purpose: Star Schema for analytics
 -- Database: DuckDB
--- Run order: Executed by Python (not PostgreSQL)
+-- Storage: MinIO (bucket: jobinsight-warehouse)
+-- Version: 3.0
+-- Note: This script is idempotent - safe to run multiple times
 -- ============================================
--- NOTE: This file is for DuckDB, not PostgreSQL
--- Executed by: src/etl/warehouse/pipeline.py
+
 -- ============================================
+-- DROP EXISTING OBJECTS (for clean re-run)
+-- ============================================
+
+DROP INDEX IF EXISTS idx_bridge_location;
+DROP INDEX IF EXISTS idx_bridge_fact;
+DROP INDEX IF EXISTS idx_fact_load_month;
+DROP INDEX IF EXISTS idx_fact_observed;
+DROP INDEX IF EXISTS idx_fact_date;
+DROP INDEX IF EXISTS idx_dimlocation_city;
+DROP INDEX IF EXISTS idx_dimcompany_hash;
+DROP INDEX IF EXISTS uq_dimcompany_current;
+DROP INDEX IF EXISTS idx_dimjob_jobid;
+DROP INDEX IF EXISTS uq_dimjob_current;
+
+DROP TABLE IF EXISTS FactJobLocationBridge;
+DROP TABLE IF EXISTS FactJobPostingDaily;
+DROP TABLE IF EXISTS DimJob;
+DROP TABLE IF EXISTS DimCompany;
+DROP TABLE IF EXISTS DimLocation;
+DROP TABLE IF EXISTS DimDate;
+
+DROP SEQUENCE IF EXISTS seq_bridge_id;
+DROP SEQUENCE IF EXISTS seq_fact_id;
+DROP SEQUENCE IF EXISTS seq_dim_location_sk;
+DROP SEQUENCE IF EXISTS seq_dim_company_sk;
+DROP SEQUENCE IF EXISTS seq_dim_job_sk;
 
 -- ============================================
 -- SEQUENCES (Auto-increment keys)
 -- ============================================
 
-CREATE SEQUENCE IF NOT EXISTS seq_dim_job_sk START 10000;
-CREATE SEQUENCE IF NOT EXISTS seq_dim_company_sk START 10000;
-CREATE SEQUENCE IF NOT EXISTS seq_dim_location_sk START 10000;
-CREATE SEQUENCE IF NOT EXISTS seq_fact_id START 10000;
+CREATE SEQUENCE seq_dim_job_sk START 1;
+CREATE SEQUENCE seq_dim_company_sk START 1;
+CREATE SEQUENCE seq_dim_location_sk START 1;
+CREATE SEQUENCE seq_fact_id START 1;
+CREATE SEQUENCE seq_bridge_id START 1;
 
 -- ============================================
 -- DIMENSION TABLES
 -- ============================================
 
 -- DimJob: Job postings with SCD Type 2
-CREATE TABLE IF NOT EXISTS DimJob (
-    job_sk INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq_dim_job_sk'),
-    job_id VARCHAR(20) NOT NULL UNIQUE,
-    title_clean VARCHAR(255) NOT NULL,
+CREATE TABLE DimJob (
+    job_sk INTEGER PRIMARY KEY,
+    job_id VARCHAR(20) NOT NULL,           -- Business key từ TopCV
+    title VARCHAR(255),
     job_url TEXT,
     skills JSON,
-    last_update VARCHAR(100),
-    logo_url TEXT,
     
     -- SCD Type 2 columns
-    effective_date DATE NOT NULL,
-    expiry_date DATE,
-    is_current BOOLEAN NOT NULL DEFAULT TRUE
+    effective_date DATE NOT NULL,          -- Ngày bắt đầu hiệu lực
+    expiry_date DATE,                      -- NULL = current record
+    is_current BOOLEAN DEFAULT TRUE
 );
 
+CREATE UNIQUE INDEX uq_dimjob_current 
+    ON DimJob(job_id) WHERE is_current = TRUE;
+
+CREATE INDEX idx_dimjob_jobid 
+    ON DimJob(job_id);
+
+
 -- DimCompany: Companies with SCD Type 2
-CREATE TABLE IF NOT EXISTS DimCompany (
-    company_sk INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq_dim_company_sk'),
-    company_name_standardized VARCHAR(200) NOT NULL,
+CREATE TABLE DimCompany (
+    company_sk INTEGER PRIMARY KEY,
+    company_bk_hash VARCHAR(64) NOT NULL,  -- MD5(LOWER(company_name)) - Business key
+    company_name VARCHAR(200) NOT NULL,
     company_url TEXT,
+    logo_url TEXT,
     verified_employer BOOLEAN DEFAULT FALSE,
     
     -- SCD Type 2 columns
     effective_date DATE NOT NULL,
-    expiry_date DATE,
-    is_current BOOLEAN NOT NULL DEFAULT TRUE
+    expiry_date DATE,                      -- NULL = current record
+    is_current BOOLEAN DEFAULT TRUE
 );
 
--- DimLocation: Locations (composite natural key)
-CREATE TABLE IF NOT EXISTS DimLocation (
-    location_sk INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq_dim_location_sk'),
-    province VARCHAR(100),
+CREATE UNIQUE INDEX uq_dimcompany_current 
+    ON DimCompany(company_bk_hash) WHERE is_current = TRUE;
+
+CREATE INDEX idx_dimcompany_hash 
+    ON DimCompany(company_bk_hash);
+
+
+-- DimLocation: Locations (city level)
+CREATE TABLE DimLocation (
+    location_sk INTEGER PRIMARY KEY,       -- -1 = Unknown
     city VARCHAR(100) NOT NULL,
-    district VARCHAR(100),
-    
-    -- SCD Type 2 columns (usually static for locations)
-    effective_date DATE NOT NULL,
-    expiry_date DATE,
-    is_current BOOLEAN NOT NULL DEFAULT TRUE,
-    
-    -- Composite natural key
-    UNIQUE (province, city, district)
+    country VARCHAR(50) DEFAULT 'Vietnam',
+    UNIQUE (city, country)
 );
 
--- DimDate: Date dimension
-CREATE TABLE IF NOT EXISTS DimDate (
+CREATE INDEX idx_dimlocation_city 
+    ON DimLocation(city);
+
+
+-- DimDate: Date dimension (data-driven range)
+CREATE TABLE DimDate (
     date_id DATE PRIMARY KEY,
     day INTEGER NOT NULL,
     month INTEGER NOT NULL,
     quarter INTEGER NOT NULL,
     year INTEGER NOT NULL,
-    weekday VARCHAR(10) NOT NULL
+    week_of_year INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,          -- 1=Monday, 7=Sunday
+    weekday_name VARCHAR(10) NOT NULL,
+    is_weekend BOOLEAN NOT NULL,
+    year_month VARCHAR(7) NOT NULL,        -- 'YYYY-MM'
+    quarter_name VARCHAR(2) NOT NULL       -- 'Q1', 'Q2', 'Q3', 'Q4'
 );
 
 -- ============================================
 -- FACT TABLES
 -- ============================================
 
--- FactJobPostingDaily: Main fact table (daily grain)
--- Grain: One job posting for one calendar day
-CREATE TABLE IF NOT EXISTS FactJobPostingDaily (
-    fact_id INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq_fact_id'),
+-- FactJobPostingDaily: Main fact table
+-- Grain: 1 job × 1 day (5 days: 1 observed + 4 projected)
+CREATE TABLE FactJobPostingDaily (
+    fact_id INTEGER PRIMARY KEY,
+    job_sk INTEGER NOT NULL,               -- FK → DimJob
+    company_sk INTEGER NOT NULL,           -- FK → DimCompany
+    date_id DATE NOT NULL,                 -- FK → DimDate
     
-    -- Dimension foreign keys
-    job_sk INTEGER NOT NULL,
-    company_sk INTEGER NOT NULL,
-    date_id DATE NOT NULL,
+    is_observed BOOLEAN NOT NULL,          -- TRUE = crawled, FALSE = projected
+    
+    -- Date FKs
+    posted_date_id DATE,                   -- FK → DimDate
+    due_date_id DATE,                      -- FK → DimDate
     
     -- Measures
     salary_min NUMERIC,
     salary_max NUMERIC,
-    salary_type VARCHAR(20),
-    due_date TIMESTAMP,
+    salary_type VARCHAR(20),               -- 'range', 'upto', 'from', 'negotiable'
     time_remaining TEXT,
-    verified_employer BOOLEAN DEFAULT FALSE,
+    
+    -- Timestamps
     posted_time TIMESTAMP,
+    due_date TIMESTAMP,
     crawled_at TIMESTAMP NOT NULL,
     
     -- Partition key
-    load_month VARCHAR(7) NOT NULL,  -- Format: YYYY-MM
+    load_month VARCHAR(7) NOT NULL,        -- 'YYYY-MM'
     
-    -- Constraints (FK constraints added in migration 002)
-    UNIQUE (job_sk, date_id)  -- Prevent duplicate facts
+    CONSTRAINT uq_fact_job_date UNIQUE (job_sk, date_id)
 );
 
--- FactJobLocationBridge: Many-to-many (Job × Location)
-CREATE TABLE IF NOT EXISTS FactJobLocationBridge (
-    fact_id INTEGER NOT NULL,
-    location_sk INTEGER NOT NULL,
-    
-    -- Composite primary key
-    PRIMARY KEY (fact_id, location_sk)
-    
-    -- FK constraints added in migration 002
-);
+CREATE INDEX idx_fact_date 
+    ON FactJobPostingDaily(date_id);
 
--- ============================================
--- INDEXES FOR PERFORMANCE
--- ============================================
+CREATE INDEX idx_fact_observed 
+    ON FactJobPostingDaily(date_id, is_observed);
 
--- Dimension indexes
-CREATE INDEX IF NOT EXISTS idx_dimjob_current 
-    ON DimJob(is_current);
-
-CREATE INDEX IF NOT EXISTS idx_dimjob_job_id 
-    ON DimJob(job_id) WHERE is_current = TRUE;
-
-CREATE INDEX IF NOT EXISTS idx_dimcompany_current 
-    ON DimCompany(is_current);
-
-CREATE INDEX IF NOT EXISTS idx_dimcompany_name 
-    ON DimCompany(company_name_standardized) WHERE is_current = TRUE;
-
-CREATE INDEX IF NOT EXISTS idx_dimlocation_current 
-    ON DimLocation(is_current);
-
-CREATE INDEX IF NOT EXISTS idx_dimlocation_city 
-    ON DimLocation(city) WHERE is_current = TRUE;
-
--- Fact table indexes
-CREATE INDEX IF NOT EXISTS idx_fact_date 
-    ON FactJobPostingDaily(date_id DESC);
-
-CREATE INDEX IF NOT EXISTS idx_fact_load_month 
+CREATE INDEX idx_fact_load_month 
     ON FactJobPostingDaily(load_month);
 
-CREATE INDEX IF NOT EXISTS idx_fact_job_date 
-    ON FactJobPostingDaily(job_sk, date_id);
 
-CREATE INDEX IF NOT EXISTS idx_fact_company_date 
-    ON FactJobPostingDaily(company_sk, date_id);
+-- FactJobLocationBridge: Many-to-many (Fact × Location)
+CREATE TABLE FactJobLocationBridge (
+    bridge_id INTEGER PRIMARY KEY,
+    fact_id INTEGER NOT NULL,              -- FK → FactJobPostingDaily
+    location_sk INTEGER NOT NULL,          -- FK → DimLocation
+    
+    CONSTRAINT uq_bridge UNIQUE (fact_id, location_sk)
+);
 
-CREATE INDEX IF NOT EXISTS idx_fact_salary 
-    ON FactJobPostingDaily(salary_min, salary_max) 
-    WHERE salary_min IS NOT NULL;
-
--- Bridge table index
-CREATE INDEX IF NOT EXISTS idx_bridge_fact 
+CREATE INDEX idx_bridge_fact 
     ON FactJobLocationBridge(fact_id);
 
-CREATE INDEX IF NOT EXISTS idx_bridge_location 
+CREATE INDEX idx_bridge_location 
     ON FactJobLocationBridge(location_sk);
 
 -- ============================================
--- COMMENTS
+-- DEFAULT RECORDS
 -- ============================================
 
-COMMENT ON TABLE DimJob IS 
-    'Job dimension with SCD Type 2. Tracks job title, skills, URL changes over time.';
-
-COMMENT ON TABLE DimCompany IS 
-    'Company dimension with SCD Type 2. Tracks company info changes.';
-
-COMMENT ON TABLE DimLocation IS 
-    'Location dimension with composite key (province, city, district).';
-
-COMMENT ON TABLE FactJobPostingDaily IS 
-    'Main fact table. Grain: One job posting for one calendar day. Partitioned by load_month.';
-
-COMMENT ON TABLE FactJobLocationBridge IS 
-    'Bridge table for many-to-many relationship between jobs and locations.';
+INSERT INTO DimLocation (location_sk, city, country) 
+VALUES (-1, 'Unknown', 'Unknown');
