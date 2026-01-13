@@ -26,7 +26,7 @@ Retention Policies định nghĩa vòng đời dữ liệu: lưu trữ bao lâu,
 | Staging Jobs | PostgreSQL | Vĩnh viễn | Manual | 🚧 TODO |
 | Archive Parquet | MinIO `jobinsight-archive` | 12 tháng | Manual cleanup | 🚧 TODO |
 | Database Backup | MinIO `jobinsight-backup` | 7 ngày | Manual | 🚧 TODO |
-| Warehouse Parquet | MinIO `jobinsight-warehouse` | 12 tháng | Manual | 🚧 TODO |
+| Warehouse Parquet | MinIO `jobinsight-warehouse` | 12 tháng | DWH ETL | ✅ Production |
 | Airflow Logs | Container | 30 ngày | Auto-cleanup | ✅ Airflow native |
 
 ---
@@ -147,11 +147,38 @@ jobinsight-backup/
 
 **Retention:** 12 tháng (planned)
 
-**Status:** 🚧 **TODO** - DWH ETL chưa implement
+**Status:** ✅ **Production** - DWH ETL đang chạy
+
+**Cấu trúc:**
+```
+jobinsight-warehouse/
+├── dwh.duckdb                           # DuckDB database (latest)
+├── backups/
+│   └── dwh_backup_20250113_080000.duckdb
+└── parquet/
+    └── load_month=2025-01/
+        ├── DimJob.parquet
+        ├── DimCompany.parquet
+        ├── DimLocation.parquet
+        ├── DimDate.parquet
+        ├── FactJobPostingDaily.parquet
+        └── FactJobLocationBridge.parquet
+```
 
 **Lý do:**
 - Business queries thường focus 1 năm gần nhất
 - Parquet optimized, không tốn nhiều storage
+- DuckDB database cho ad-hoc queries
+- Auto-backup trước mỗi ETL run
+
+**Flow:**
+```
+Staging (PostgreSQL) → DWH ETL → DuckDB (MinIO) → Parquet Export (MinIO)
+```
+
+**Recovery:**
+- DuckDB: Restore từ backup hoặc rebuild từ staging
+- Parquet: Immutable exports, không cần recovery
 
 ---
 
@@ -327,5 +354,8 @@ mc mirror minio/jobinsight-archive /external/backup/
 
 - Archive DAG: `dags/archive_dag.py`
 - Archive functions: `src/storage/archive.py`
+- DWH ETL pipeline: `src/etl/warehouse/pipeline.py`
+- DWH schema: `sql/schemas/dwh_schema.sql`
+- DuckDB operations: `src/storage/minio.py`
 - MinIO setup: `docs/infrastructure/minio_setup_guide.md`
 - MinIO operations: `docs/infrastructure/minio_operations.md`

@@ -119,6 +119,76 @@ docker run --rm \
 docker-compose start minio
 ```
 
+### 3.3 DWH Operations
+
+**Automated ETL Flow:**
+```
+1. Download dwh.duckdb từ MinIO (hoặc tạo mới)
+2. Backup existing database
+3. Query staging data từ PostgreSQL
+4. Process dimensions (SCD Type 2)
+5. Process facts (observed + projected)
+6. Process bridge tables
+7. Export Parquet partitions
+8. Upload dwh.duckdb back to MinIO
+```
+
+**Manual trigger (when DAG exists):**
+
+```bash
+# Trigger DWH ETL DAG
+docker exec jobinsight-airflow-webserver-1 \
+  airflow dags trigger jobinsight_dwh_etl
+```
+
+**Run directly from Python:**
+
+```python
+# Execute inside Airflow container
+docker exec jobinsight-airflow-webserver-1 python -c "
+from src.etl.warehouse.pipeline import run_etl
+import os
+
+pg_conn = f'postgresql://{os.getenv("POSTGRES_USER")}:{os.getenv("POSTGRES_PASSWORD")}@postgres:5432/{os.getenv("POSTGRES_DB")}'
+result = run_etl(pg_conn_string=pg_conn)
+print(result)
+"
+```
+
+**Check DWH data:**
+
+```python
+from src.storage.minio import download_duckdb, get_duckdb_connection
+
+db_path = download_duckdb()
+with get_duckdb_connection(db_path) as conn:
+    # Check fact counts
+    facts = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily").fetchone()[0]
+    print(f"Total facts: {facts}")
+    
+    # Check dimensions
+    jobs = conn.execute("SELECT COUNT(*) FROM DimJob WHERE is_current=TRUE").fetchone()[0]
+    companies = conn.execute("SELECT COUNT(*) FROM DimCompany WHERE is_current=TRUE").fetchone()[0]
+    print(f"Current jobs: {jobs}, companies: {companies}")
+    
+    # Check observed vs projected
+    observed = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily WHERE is_observed=TRUE").fetchone()[0]
+    projected = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily WHERE is_observed=FALSE").fetchone()[0]
+    print(f"Observed: {observed}, Projected: {projected}")
+```
+
+**Download Parquet exports:**
+
+```bash
+# List Parquet files
+docker exec jobinsight_minio mc ls --recursive /data/jobinsight-warehouse/parquet/
+
+# Download specific month
+docker exec jobinsight_minio mc cp --recursive \
+  /data/jobinsight-warehouse/parquet/load_month=2025-01/ \
+  ./local_parquet/
+```
+
 ---
 
 ## 4. Restore Operations
@@ -314,6 +384,7 @@ open http://localhost:9001
 |-----|----------|-------|
 | `jobinsight_pipeline` | Daily 6:00 AM | Upload HTML to MinIO |
 | `jobinsight_archive` | Weekly Sunday 2:00 AM | Archive old data to MinIO |
+| `jobinsight_dwh_etl` | Daily 8:00 AM (planned) | ETL Staging → DWH (DuckDB + Parquet) |
 
 ---
 
@@ -321,4 +392,7 @@ open http://localhost:9001
 
 - Setup guide: `docs/infrastructure/minio_setup_guide.md`
 - Source code: `src/storage/minio.py`, `src/storage/minio_storage.py`, `src/storage/archive.py`
+- DWH ETL pipeline: `src/etl/warehouse/pipeline.py`
+- DWH schema: `sql/schemas/dwh_schema.sql`
+- DuckDB operations: `src/storage/minio.py` (download_duckdb, upload_duckdb, backup_duckdb)
 - Config: `src/config/storage_config.py`, `.env`

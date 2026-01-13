@@ -144,16 +144,42 @@ def get_minio_client() -> Minio:
 | `list_archives()` | `archive.py` | List archive files |
 | `restore_from_archive()` | `archive.py` | Restore từ archive |
 
+### 5.4 DuckDB Operations (`src/storage/minio.py`)
+
+| Function | Mô tả |
+|----------|-------|
+| `download_duckdb(force_new)` | Download DuckDB từ MinIO hoặc tạo mới |
+| `upload_duckdb(local_path)` | Upload DuckDB lên MinIO |
+| `backup_duckdb(local_path)` | Backup DuckDB trước khi ETL |
+| `export_parquet(conn, load_month)` | Export tables ra Parquet partitions |
+| `get_duckdb_connection(db_path)` | Context manager cho DuckDB connection |
+
+**Example:**
+```python
+from src.storage.minio import download_duckdb, upload_duckdb, get_duckdb_connection
+
+# Download from MinIO
+db_path = download_duckdb()
+
+# Work with DuckDB
+with get_duckdb_connection(db_path) as conn:
+    result = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily").fetchone()
+    print(f"Facts: {result[0]}")
+
+# Upload back
+upload_duckdb(db_path)
+```
+
 ---
 
-### 5.4 Bucket Usage hiện tại
+### 5.5 Bucket Usage hiện tại
 
 | Bucket | Được sử dụng trong | Status |
 |--------|-------------------|--------|
 | `jobinsight-raw` | `pipeline_dag.py` → `upload_html_to_minio()` | ✅ Production |
 | `jobinsight-archive` | `archive_dag.py` → `upload_archive_to_minio()` | ✅ Production |
 | `jobinsight-backup` | *Chưa implement* | 🚧 TODO |
-| `jobinsight-warehouse` | *Chưa implement (DWH ETL)* | 🚧 TODO |
+| `jobinsight-warehouse` | DWH ETL (`src/etl/warehouse/pipeline.py`) | ✅ Production |
 
 ---
 
@@ -169,6 +195,15 @@ html/it_p{page}_{timestamp}.html
 ```
 year={YYYY}/month={MM}/raw_jobs_{timestamp}.parquet
 # Ví dụ: year=2025/month=01/raw_jobs_20250102_143022.parquet
+```
+
+### DWH Database (jobinsight-warehouse)
+```
+dwh.duckdb                                    # Latest DuckDB database
+backups/dwh_backup_{timestamp}.duckdb        # Backups before ETL
+parquet/load_month=2025-01/DimJob.parquet    # Dimension tables
+parquet/load_month=2025-01/FactJobPostingDaily.parquet
+# Ví dụ: parquet/load_month=2025-01/DimJob.parquet
 ```
 
 ---
