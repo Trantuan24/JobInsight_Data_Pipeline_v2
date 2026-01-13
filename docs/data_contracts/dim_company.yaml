@@ -1,0 +1,178 @@
+# =============================================================================
+# Data Contract: DimCompany
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-dim-company-001
+name: DimCompany
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Dimension table chứa thông tin công ty.
+    SCD Type 2 - lưu lịch sử thay đổi.
+    Business key là MD5 hash của tên công ty (lowercase) để handle duplicate URLs.
+  usage: >
+    - Lookup company details từ fact table
+    - Phân tích theo công ty, verified status
+    - Track thay đổi company info theo thời gian
+
+tags:
+  - dimension
+  - dwh
+  - scd2
+  - company
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: DimCompany
+    physicalType: table
+    description: Company dimension với SCD Type 2
+    
+    properties:
+      - name: company_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: Surrogate key
+        primaryKey: true
+        nullable: false
+        examples: [1, 2, 50]
+        
+      - name: company_bk_hash
+        logicalType: string
+        physicalType: VARCHAR(64)
+        description: Business key = MD5(LOWER(company_name))
+        nullable: false
+        businessKey: true
+        examples: ["b24eeafd803e9dd00dfc7f0ca5475248"]
+        
+      - name: company_name
+        logicalType: string
+        physicalType: VARCHAR(200)
+        description: Tên công ty (đã chuẩn hóa)
+        nullable: false
+        examples: ["VIETTEL Digital", "Bss Group", "FPT Software"]
+        
+      - name: company_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL trang công ty trên TopCV
+        nullable: true
+        examples: ["https://www.topcv.vn/cong-ty/viettel-digital/198937.html"]
+        
+      - name: logo_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL logo công ty
+        nullable: true
+        examples: ["https://cdn-new.topcv.vn/unsafe/150x/..."]
+        
+      - name: verified_employer
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Nhà tuyển dụng đã xác thực
+        nullable: false
+        default: false
+        examples: [true, false]
+        
+      # SCD Type 2 columns
+      - name: effective_date
+        logicalType: date
+        physicalType: DATE
+        description: Ngày bắt đầu hiệu lực
+        nullable: false
+        scdType: 2
+        examples: ["2026-01-13"]
+        
+      - name: expiry_date
+        logicalType: date
+        physicalType: DATE
+        description: Ngày hết hiệu lực (NULL = current)
+        nullable: true
+        scdType: 2
+        examples: [null, "2026-01-20"]
+        
+      - name: is_current
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Record hiện tại
+        nullable: false
+        default: true
+        scdType: 2
+        examples: [true, false]
+
+    indexes:
+      - name: uq_dimcompany_current
+        columns: [company_bk_hash]
+        unique: true
+        condition: "WHERE is_current = TRUE"
+        description: Unique index cho current records
+        
+      - name: idx_dimcompany_hash
+        columns: [company_bk_hash]
+        unique: false
+        description: Index cho lookup by business key hash
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: Surrogate key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimCompany WHERE company_sk IS NULL
+    mustBe: 0
+    
+  - name: bk_not_null
+    description: Business key hash không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimCompany WHERE company_bk_hash IS NULL
+    mustBe: 0
+    
+  - name: company_name_not_null
+    description: Tên công ty không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimCompany WHERE company_name IS NULL
+    mustBe: 0
+    
+  - name: unique_current_company
+    description: Mỗi company_bk_hash chỉ có 1 record is_current=TRUE
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT company_bk_hash, COUNT(*) as cnt
+        FROM DimCompany
+        WHERE is_current = TRUE
+        GROUP BY company_bk_hash
+        HAVING COUNT(*) > 1
+      )
+    mustBe: 0
+    
+  - name: hash_format_valid
+    description: Hash phải là 32 ký tự hex
+    dimension: validity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM DimCompany
+      WHERE LENGTH(company_bk_hash) != 32
+    mustBe: 0
+
+# =============================================================================
+# SLA
+# =============================================================================
+sla:
+  - name: freshness
+    description: Dimension được cập nhật trong 24 giờ
+    type: freshness
+    threshold: 24
+    unit: hours

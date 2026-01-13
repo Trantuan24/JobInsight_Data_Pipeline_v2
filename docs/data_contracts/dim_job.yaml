@@ -1,0 +1,163 @@
+# =============================================================================
+# Data Contract: DimJob
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-dim-job-001
+name: DimJob
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Dimension table chứa thông tin tin tuyển dụng.
+    SCD Type 2 - lưu lịch sử thay đổi.
+  usage: >
+    - Lookup job details từ fact table
+    - Phân tích theo job title, skills
+    - Track thay đổi job info theo thời gian
+
+tags:
+  - dimension
+  - dwh
+  - scd2
+  - job
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: DimJob
+    physicalType: table
+    description: Job dimension với SCD Type 2
+    
+    properties:
+      - name: job_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: Surrogate key
+        primaryKey: true
+        nullable: false
+        examples: [1, 2, 100]
+        
+      - name: job_id
+        logicalType: string
+        physicalType: VARCHAR(20)
+        description: Business key từ TopCV
+        nullable: false
+        businessKey: true
+        examples: ["2008076", "2008356", "1425673"]
+        
+      - name: title
+        logicalType: string
+        physicalType: VARCHAR(255)
+        description: Tiêu đề công việc
+        nullable: true
+        examples: ["AI Engineer", "Full Stack Developer", "Java Developer"]
+        
+      - name: job_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL tin tuyển dụng
+        nullable: true
+        examples: ["https://www.topcv.vn/viec-lam/ai-engineer/2008076.html"]
+        
+      - name: skills
+        logicalType: json
+        physicalType: JSON
+        description: Array kỹ năng yêu cầu
+        nullable: true
+        examples: [["Java", "MySQL", "Spring"], []]
+        
+      # SCD Type 2 columns
+      - name: effective_date
+        logicalType: date
+        physicalType: DATE
+        description: Ngày bắt đầu hiệu lực
+        nullable: false
+        scdType: 2
+        examples: ["2026-01-13"]
+        
+      - name: expiry_date
+        logicalType: date
+        physicalType: DATE
+        description: Ngày hết hiệu lực (NULL = current)
+        nullable: true
+        scdType: 2
+        examples: [null, "2026-01-20"]
+        
+      - name: is_current
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Record hiện tại
+        nullable: false
+        default: true
+        scdType: 2
+        examples: [true, false]
+
+    indexes:
+      - name: uq_dimjob_current
+        columns: [job_id]
+        unique: true
+        condition: "WHERE is_current = TRUE"
+        description: Unique index cho current records
+        
+      - name: idx_dimjob_jobid
+        columns: [job_id]
+        unique: false
+        description: Index cho lookup by business key
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: Surrogate key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimJob WHERE job_sk IS NULL
+    mustBe: 0
+    
+  - name: bk_not_null
+    description: Business key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimJob WHERE job_id IS NULL
+    mustBe: 0
+    
+  - name: unique_current_job
+    description: Mỗi job_id chỉ có 1 record is_current=TRUE
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT job_id, COUNT(*) as cnt
+        FROM DimJob
+        WHERE is_current = TRUE
+        GROUP BY job_id
+        HAVING COUNT(*) > 1
+      )
+    mustBe: 0
+    
+  - name: scd2_dates_valid
+    description: effective_date <= expiry_date (nếu có)
+    dimension: validity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM DimJob
+      WHERE expiry_date IS NOT NULL 
+        AND effective_date > expiry_date
+    mustBe: 0
+
+# =============================================================================
+# SLA
+# =============================================================================
+sla:
+  - name: freshness
+    description: Dimension được cập nhật trong 24 giờ
+    type: freshness
+    threshold: 24
+    unit: hours

@@ -1,0 +1,129 @@
+# =============================================================================
+# Data Contract: DimLocation
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-dim-location-001
+name: DimLocation
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Dimension table chứa thông tin địa điểm (city level).
+    SCD Type 1 - overwrite khi có thay đổi.
+    Liên kết với fact qua bridge table (many-to-many).
+  usage: >
+    - Phân tích job distribution theo địa lý
+    - Filter/group theo city, country
+
+tags:
+  - dimension
+  - dwh
+  - scd1
+  - location
+  - geography
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: DimLocation
+    physicalType: table
+    description: Location dimension (city level)
+    
+    properties:
+      - name: location_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: Surrogate key (-1 = Unknown)
+        primaryKey: true
+        nullable: false
+        examples: [-1, 1, 17]
+        
+      - name: city
+        logicalType: string
+        physicalType: VARCHAR(100)
+        description: Tên thành phố
+        nullable: false
+        examples: ["Hà Nội", "Hồ Chí Minh", "Đà Nẵng", "Unknown"]
+        
+      - name: country
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Quốc gia
+        nullable: false
+        default: Vietnam
+        examples: ["Vietnam", "Nước Ngoài", "Unknown"]
+
+    indexes:
+      - name: idx_dimlocation_city
+        columns: [city]
+        unique: false
+        description: Index cho filter/group theo city
+
+    constraints:
+      - name: uq_city_country
+        type: unique
+        columns: [city, country]
+        description: Combination city + country phải unique
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: Surrogate key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimLocation WHERE location_sk IS NULL
+    mustBe: 0
+    
+  - name: city_not_null
+    description: City không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimLocation WHERE city IS NULL
+    mustBe: 0
+    
+  - name: unique_city_country
+    description: Combination city + country phải unique
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT city, country, COUNT(*) as cnt
+        FROM DimLocation
+        GROUP BY city, country
+        HAVING COUNT(*) > 1
+      )
+    mustBe: 0
+    
+  - name: unknown_record_exists
+    description: Record Unknown (sk=-1) phải tồn tại
+    dimension: completeness
+    type: sql
+    query: |
+      SELECT CASE WHEN COUNT(*) = 1 THEN 0 ELSE 1 END
+      FROM DimLocation WHERE location_sk = -1
+    mustBe: 0
+
+# =============================================================================
+# Special Values
+# =============================================================================
+specialValues:
+  - name: unknown
+    description: Default khi không xác định được location
+    values:
+      location_sk: -1
+      city: Unknown
+      country: Unknown
+      
+  - name: foreign
+    description: Làm việc ở nước ngoài
+    values:
+      city: Unknown
+      country: Nước Ngoài

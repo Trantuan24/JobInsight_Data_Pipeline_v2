@@ -1,0 +1,278 @@
+# =============================================================================
+# Data Contract: FactJobPostingDaily
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-fact-job-posting-daily-001
+name: FactJobPostingDaily
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Fact table chính của DWH, theo dõi trạng thái tin tuyển dụng theo ngày.
+    Grain: 1 job × 1 ngày. Mỗi job có 5 records (1 observed + 4 projected).
+  limitations: >
+    - Dữ liệu chỉ từ TopCV, không bao gồm các nguồn khác
+    - Salary có thể NULL nếu công ty không công khai
+  usage: >
+    - Phân tích xu hướng tuyển dụng theo thời gian
+    - Thống kê salary theo location, company
+    - Tracking job posting lifecycle
+
+tags:
+  - fact
+  - dwh
+  - job-posting
+  - periodic-snapshot
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: FactJobPostingDaily
+    physicalType: table
+    description: Periodic snapshot fact table - trạng thái job posting hàng ngày
+    
+    properties:
+      - name: fact_id
+        logicalType: integer
+        physicalType: INTEGER
+        description: Surrogate key (auto-increment)
+        primaryKey: true
+        nullable: false
+        examples: [3386, 3387, 3388]
+        
+      - name: job_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: FK to DimJob
+        nullable: false
+        foreignKey:
+          table: DimJob
+          column: job_sk
+        examples: [1, 22, 100]
+          
+      - name: company_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: FK to DimCompany
+        nullable: false
+        foreignKey:
+          table: DimCompany
+          column: company_sk
+        examples: [1, 19, 50]
+          
+      - name: date_id
+        logicalType: date
+        physicalType: DATE
+        description: FK to DimDate - ngày tracking
+        nullable: false
+        foreignKey:
+          table: DimDate
+          column: date_id
+        examples: ["2026-01-13", "2026-01-14"]
+          
+      - name: is_observed
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: TRUE = crawled thực tế, FALSE = projected
+        nullable: false
+        examples: [true, false]
+        
+      - name: posted_date_id
+        logicalType: date
+        physicalType: DATE
+        description: FK to DimDate - ngày đăng tin
+        nullable: true
+        foreignKey:
+          table: DimDate
+          column: date_id
+          
+      - name: due_date_id
+        logicalType: date
+        physicalType: DATE
+        description: FK to DimDate - ngày hết hạn
+        nullable: true
+        foreignKey:
+          table: DimDate
+          column: date_id
+          
+      - name: salary_min
+        logicalType: decimal
+        physicalType: NUMERIC
+        description: Lương tối thiểu (VND)
+        nullable: true
+        examples: [15000000, 20000000, null]
+        
+      - name: salary_max
+        logicalType: decimal
+        physicalType: NUMERIC
+        description: Lương tối đa (VND)
+        nullable: true
+        examples: [25000000, 40000000, null]
+        
+      - name: salary_type
+        logicalType: string
+        physicalType: VARCHAR(20)
+        description: Loại salary
+        nullable: true
+        enum:
+          - range
+          - upto
+          - from
+          - negotiable
+        examples: ["negotiable", "range"]
+          
+      - name: time_remaining
+        logicalType: string
+        physicalType: TEXT
+        description: "Thời gian còn lại (VD: 'Còn 23 ngày để ứng tuyển')"
+        nullable: true
+        examples: ["Còn 23 ngày để ứng tuyển", "Còn 5 ngày để ứng tuyển"]
+        
+      - name: posted_time
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        description: Timestamp đăng tin
+        nullable: true
+        examples: ["2026-01-07 06:11:31"]
+        
+      - name: due_date
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        description: Timestamp hết hạn
+        nullable: true
+        examples: ["2026-02-06 06:24:31"]
+        
+      - name: crawled_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        description: Timestamp crawl dữ liệu
+        nullable: false
+        examples: ["2026-01-13 10:20:06"]
+        
+      - name: load_month
+        logicalType: string
+        physicalType: VARCHAR(7)
+        description: "Partition key (YYYY-MM)"
+        nullable: false
+        pattern: "^\\d{4}-\\d{2}$"
+        examples: ["2026-01", "2026-02"]
+
+    indexes:
+      - name: idx_fact_date
+        columns: [date_id]
+        unique: false
+        description: Index cho filter/group theo ngày
+        
+      - name: idx_fact_observed
+        columns: [date_id, is_observed]
+        unique: false
+        description: Index cho filter observed/projected
+        
+      - name: idx_fact_load_month
+        columns: [load_month]
+        unique: false
+        description: Index cho partition pruning
+
+    constraints:
+      - name: uq_fact_job_date
+        type: unique
+        columns: [job_sk, date_id]
+        description: Mỗi job chỉ có 1 record/ngày
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: Primary key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM FactJobPostingDaily WHERE fact_id IS NULL
+    mustBe: 0
+    
+  - name: fk_job_valid
+    description: job_sk phải tồn tại trong DimJob
+    dimension: integrity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobPostingDaily f
+      LEFT JOIN DimJob j ON f.job_sk = j.job_sk
+      WHERE j.job_sk IS NULL
+    mustBe: 0
+    
+  - name: fk_company_valid
+    description: company_sk phải tồn tại trong DimCompany
+    dimension: integrity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobPostingDaily f
+      LEFT JOIN DimCompany c ON f.company_sk = c.company_sk
+      WHERE c.company_sk IS NULL
+    mustBe: 0
+    
+  - name: unique_job_date
+    description: Mỗi job chỉ có 1 record/ngày
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT job_sk, date_id, COUNT(*) as cnt
+        FROM FactJobPostingDaily
+        GROUP BY job_sk, date_id
+        HAVING COUNT(*) > 1
+      )
+    mustBe: 0
+    
+  - name: salary_range_valid
+    description: salary_min <= salary_max
+    dimension: validity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobPostingDaily
+      WHERE salary_min IS NOT NULL 
+        AND salary_max IS NOT NULL 
+        AND salary_min > salary_max
+    mustBe: 0
+    
+  - name: date_id_not_future
+    description: date_id không quá xa trong tương lai (max 7 ngày)
+    dimension: validity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobPostingDaily
+      WHERE date_id > CURRENT_DATE + 7
+    mustBe: 0
+
+# =============================================================================
+# Service Level Agreement
+# =============================================================================
+sla:
+  - name: freshness
+    description: Dữ liệu phải được cập nhật trong 24 giờ
+    type: freshness
+    column: crawled_at
+    threshold: 24
+    unit: hours
+    
+  - name: completeness
+    description: Tỷ lệ records hợp lệ >= 95%
+    type: completeness
+    threshold: 95
+    unit: percent
+
+# =============================================================================
+# Team & Support
+# =============================================================================
+team:
+  - name: JobInsight Data Team
+    role: owner
+    
+support:
+  - channel: github
+    url: https://github.com/your-repo/jobinsight

@@ -1,0 +1,205 @@
+# =============================================================================
+# Data Contract: DimDate
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-dim-date-001
+name: DimDate
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Dimension table chứa thông tin thời gian.
+    SCD Type 0 - fixed, không thay đổi.
+    Role-playing dimension: date_id, posted_date_id, due_date_id.
+  usage: >
+    - Time-series analysis
+    - Filter/group theo day, month, quarter, year
+    - Weekend vs weekday analysis
+
+tags:
+  - dimension
+  - dwh
+  - scd0
+  - date
+  - time
+  - role-playing
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: DimDate
+    physicalType: table
+    description: Date dimension (role-playing)
+    
+    properties:
+      - name: date_id
+        logicalType: date
+        physicalType: DATE
+        description: Natural key (YYYY-MM-DD)
+        primaryKey: true
+        nullable: false
+        examples: ["2026-01-13", "2026-01-14"]
+        
+      - name: day
+        logicalType: integer
+        physicalType: INTEGER
+        description: Ngày trong tháng (1-31)
+        nullable: false
+        examples: [1, 15, 31]
+        
+      - name: month
+        logicalType: integer
+        physicalType: INTEGER
+        description: Tháng (1-12)
+        nullable: false
+        examples: [1, 6, 12]
+        
+      - name: quarter
+        logicalType: integer
+        physicalType: INTEGER
+        description: Quý (1-4)
+        nullable: false
+        examples: [1, 2, 3, 4]
+        
+      - name: year
+        logicalType: integer
+        physicalType: INTEGER
+        description: Năm
+        nullable: false
+        examples: [2025, 2026]
+        
+      - name: week_of_year
+        logicalType: integer
+        physicalType: INTEGER
+        description: Tuần trong năm (1-53)
+        nullable: false
+        examples: [1, 26, 52]
+        
+      - name: day_of_week
+        logicalType: integer
+        physicalType: INTEGER
+        description: Ngày trong tuần (1=Monday, 7=Sunday)
+        nullable: false
+        examples: [1, 5, 7]
+        
+      - name: weekday_name
+        logicalType: string
+        physicalType: VARCHAR(10)
+        description: Tên ngày trong tuần
+        nullable: false
+        enum:
+          - Monday
+          - Tuesday
+          - Wednesday
+          - Thursday
+          - Friday
+          - Saturday
+          - Sunday
+        examples: ["Monday", "Friday", "Sunday"]
+          
+      - name: is_weekend
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: TRUE nếu là Saturday hoặc Sunday
+        nullable: false
+        examples: [true, false]
+        
+      - name: year_month
+        logicalType: string
+        physicalType: VARCHAR(7)
+        description: Format YYYY-MM
+        nullable: false
+        pattern: "^\\d{4}-\\d{2}$"
+        examples: ["2026-01", "2026-06"]
+        
+      - name: quarter_name
+        logicalType: string
+        physicalType: VARCHAR(2)
+        description: Tên quý (Q1-Q4)
+        nullable: false
+        enum:
+          - Q1
+          - Q2
+          - Q3
+          - Q4
+        examples: ["Q1", "Q2"]
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: Primary key không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM DimDate WHERE date_id IS NULL
+    mustBe: 0
+    
+  - name: day_range_valid
+    description: Day phải trong khoảng 1-31
+    dimension: validity
+    type: sql
+    query: SELECT COUNT(*) FROM DimDate WHERE day < 1 OR day > 31
+    mustBe: 0
+    
+  - name: month_range_valid
+    description: Month phải trong khoảng 1-12
+    dimension: validity
+    type: sql
+    query: SELECT COUNT(*) FROM DimDate WHERE month < 1 OR month > 12
+    mustBe: 0
+    
+  - name: quarter_range_valid
+    description: Quarter phải trong khoảng 1-4
+    dimension: validity
+    type: sql
+    query: SELECT COUNT(*) FROM DimDate WHERE quarter < 1 OR quarter > 4
+    mustBe: 0
+    
+  - name: day_of_week_range_valid
+    description: Day of week phải trong khoảng 1-7
+    dimension: validity
+    type: sql
+    query: SELECT COUNT(*) FROM DimDate WHERE day_of_week < 1 OR day_of_week > 7
+    mustBe: 0
+    
+  - name: weekend_consistent
+    description: is_weekend phải đúng với day_of_week
+    dimension: consistency
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM DimDate
+      WHERE (day_of_week IN (6, 7) AND is_weekend = FALSE)
+         OR (day_of_week NOT IN (6, 7) AND is_weekend = TRUE)
+    mustBe: 0
+    
+  - name: quarter_consistent
+    description: Quarter phải đúng với month
+    dimension: consistency
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM DimDate
+      WHERE (month IN (1,2,3) AND quarter != 1)
+         OR (month IN (4,5,6) AND quarter != 2)
+         OR (month IN (7,8,9) AND quarter != 3)
+         OR (month IN (10,11,12) AND quarter != 4)
+    mustBe: 0
+
+# =============================================================================
+# Role-Playing Usage
+# =============================================================================
+roles:
+  - name: date_id
+    description: Ngày tracking trong FactJobPostingDaily
+    
+  - name: posted_date_id
+    description: Ngày đăng tin tuyển dụng
+    
+  - name: due_date_id
+    description: Ngày hết hạn tin tuyển dụng

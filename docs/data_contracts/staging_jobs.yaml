@@ -1,0 +1,272 @@
+# =============================================================================
+# Data Contract: staging_jobs
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-staging-jobs-001
+name: staging_jobs
+version: 1.0.0
+status: active
+domain: job-insight-staging
+
+description:
+  purpose: >
+    Staging table chứa dữ liệu đã transform từ raw_jobs.
+    Là nguồn dữ liệu cho DWH ETL pipeline.
+  limitations: >
+    - Dữ liệu chỉ từ TopCV
+    - Một số trường có thể NULL tùy thuộc vào dữ liệu nguồn
+  usage: >
+    - Input cho DWH ETL pipeline
+    - Debug và validate dữ liệu trước khi load vào DWH
+
+tags:
+  - staging
+  - postgresql
+  - etl-source
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: staging_jobs
+    physicalType: table
+    database: PostgreSQL
+    schema: jobinsight_staging
+    description: Staging table cho job postings
+    
+    properties:
+      - name: job_id
+        logicalType: string
+        physicalType: VARCHAR
+        description: ID từ TopCV
+        primaryKey: true
+        nullable: false
+        
+      - name: title
+        logicalType: string
+        physicalType: VARCHAR
+        description: Tiêu đề gốc
+        nullable: true
+        
+      - name: title_clean
+        logicalType: string
+        physicalType: VARCHAR
+        description: Tiêu đề đã làm sạch
+        nullable: true
+        
+      - name: job_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL tin tuyển dụng
+        nullable: true
+        
+      - name: company_name
+        logicalType: string
+        physicalType: VARCHAR
+        description: Tên công ty gốc
+        nullable: true
+        
+      - name: company_name_standardized
+        logicalType: string
+        physicalType: VARCHAR
+        description: Tên công ty đã chuẩn hóa
+        nullable: true
+        
+      - name: company_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL trang công ty
+        nullable: true
+        
+      - name: verified_employer
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Nhà tuyển dụng xác thực
+        nullable: true
+        
+      - name: logo_url
+        logicalType: string
+        physicalType: TEXT
+        description: URL logo công ty
+        nullable: true
+        
+      - name: salary
+        logicalType: string
+        physicalType: VARCHAR
+        description: Salary text gốc
+        nullable: true
+        
+      - name: salary_min
+        logicalType: decimal
+        physicalType: NUMERIC
+        description: Lương tối thiểu (parsed)
+        nullable: true
+        
+      - name: salary_max
+        logicalType: decimal
+        physicalType: NUMERIC
+        description: Lương tối đa (parsed)
+        nullable: true
+        
+      - name: salary_type
+        logicalType: string
+        physicalType: VARCHAR
+        description: Loại salary
+        nullable: true
+        enum:
+          - range
+          - upto
+          - from
+          - negotiable
+          
+      - name: location
+        logicalType: string
+        physicalType: VARCHAR
+        description: Địa điểm làm việc (có thể nhiều, phân cách bởi &)
+        nullable: true
+        
+      - name: deadline
+        logicalType: string
+        physicalType: VARCHAR
+        description: Số ngày còn lại (text)
+        nullable: true
+        
+      - name: due_date
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Ngày hết hạn (parsed)
+        nullable: true
+        
+      - name: time_remaining
+        logicalType: string
+        physicalType: TEXT
+        description: Text thời gian còn lại
+        nullable: true
+        
+      - name: skills
+        logicalType: json
+        physicalType: JSONB
+        description: Array kỹ năng yêu cầu
+        nullable: true
+        
+      - name: last_update
+        logicalType: string
+        physicalType: VARCHAR
+        description: Text cập nhật gần nhất
+        nullable: true
+        
+      - name: posted_time
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Thời gian đăng tin (parsed)
+        nullable: true
+        
+      - name: crawled_at
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Thời gian crawl
+        nullable: false
+        
+      - name: created_at
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Thời gian tạo record
+        nullable: true
+        
+      - name: updated_at
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Thời gian cập nhật record
+        nullable: true
+        
+      - name: processed_to_dwh
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Đã xử lý vào DWH chưa
+        nullable: true
+        default: false
+        
+      - name: processed_at
+        logicalType: timestamp
+        physicalType: TIMESTAMPTZ
+        description: Thời gian xử lý vào DWH
+        nullable: true
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: job_id không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM jobinsight_staging.staging_jobs WHERE job_id IS NULL
+    mustBe: 0
+    
+  - name: crawled_at_not_null
+    description: crawled_at không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM jobinsight_staging.staging_jobs WHERE crawled_at IS NULL
+    mustBe: 0
+    
+  - name: salary_range_valid
+    description: salary_min <= salary_max
+    dimension: validity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM jobinsight_staging.staging_jobs
+      WHERE salary_min IS NOT NULL 
+        AND salary_max IS NOT NULL 
+        AND salary_min > salary_max
+    mustBe: 0
+    
+  - name: job_id_unique
+    description: job_id phải unique
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT job_id, COUNT(*) as cnt
+        FROM jobinsight_staging.staging_jobs
+        GROUP BY job_id
+        HAVING COUNT(*) > 1
+      ) t
+    mustBe: 0
+
+# =============================================================================
+# Lineage
+# =============================================================================
+lineage:
+  source:
+    - name: raw_jobs
+      type: table
+      database: PostgreSQL
+      schema: jobinsight_raw
+      
+  target:
+    - name: DimJob
+      type: dimension
+      database: DuckDB
+      
+    - name: DimCompany
+      type: dimension
+      database: DuckDB
+      
+    - name: FactJobPostingDaily
+      type: fact
+      database: DuckDB
+
+# =============================================================================
+# SLA
+# =============================================================================
+sla:
+  - name: freshness
+    description: Dữ liệu staging phải được cập nhật trong 12 giờ
+    type: freshness
+    column: crawled_at
+    threshold: 12
+    unit: hours

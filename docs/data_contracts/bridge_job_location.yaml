@@ -1,0 +1,131 @@
+# =============================================================================
+# Data Contract: FactJobLocationBridge
+# Standard: Open Data Contract Standard (ODCS) v3.1
+# =============================================================================
+
+apiVersion: v3.1.0
+kind: DataContract
+id: dc-bridge-job-location-001
+name: FactJobLocationBridge
+version: 1.0.0
+status: active
+domain: job-insight-dwh
+
+description:
+  purpose: >
+    Bridge table xử lý quan hệ many-to-many giữa FactJobPostingDaily và DimLocation.
+    1 job có thể tuyển ở nhiều địa điểm.
+  usage: >
+    - JOIN với FactJobPostingDaily và DimLocation để phân tích theo địa lý
+    - Đếm số locations per job
+
+tags:
+  - bridge
+  - dwh
+  - many-to-many
+
+# =============================================================================
+# Schema Definition
+# =============================================================================
+schema:
+  - name: FactJobLocationBridge
+    physicalType: table
+    description: Bridge table cho quan hệ Fact-Location (M:N)
+    
+    properties:
+      - name: bridge_id
+        logicalType: integer
+        physicalType: INTEGER
+        description: Surrogate key
+        primaryKey: true
+        nullable: false
+        examples:
+          - 1
+          - 100
+          - 3476
+        
+      - name: fact_id
+        logicalType: integer
+        physicalType: INTEGER
+        description: FK to FactJobPostingDaily
+        nullable: false
+        foreignKey:
+          table: FactJobPostingDaily
+          column: fact_id
+        examples:
+          - 3386
+          - 3387
+        
+      - name: location_sk
+        logicalType: integer
+        physicalType: INTEGER
+        description: FK to DimLocation
+        nullable: false
+        foreignKey:
+          table: DimLocation
+          column: location_sk
+        examples:
+          - 17
+          - 2
+          - -1
+
+    indexes:
+      - name: idx_bridge_fact
+        columns: [fact_id]
+        unique: false
+        description: Index cho JOIN với FactJobPostingDaily
+        
+      - name: idx_bridge_location
+        columns: [location_sk]
+        unique: false
+        description: Index cho JOIN với DimLocation
+
+    constraints:
+      - name: uq_bridge
+        type: unique
+        columns: [fact_id, location_sk]
+        description: Mỗi fact chỉ link 1 lần với mỗi location
+
+# =============================================================================
+# Data Quality Rules
+# =============================================================================
+quality:
+  - name: pk_not_null
+    description: bridge_id không được NULL
+    dimension: completeness
+    type: sql
+    query: SELECT COUNT(*) FROM FactJobLocationBridge WHERE bridge_id IS NULL
+    mustBe: 0
+    
+  - name: fk_fact_valid
+    description: fact_id phải tồn tại trong FactJobPostingDaily
+    dimension: integrity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobLocationBridge b
+      LEFT JOIN FactJobPostingDaily f ON b.fact_id = f.fact_id
+      WHERE f.fact_id IS NULL
+    mustBe: 0
+    
+  - name: fk_location_valid
+    description: location_sk phải tồn tại trong DimLocation
+    dimension: integrity
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM FactJobLocationBridge b
+      LEFT JOIN DimLocation l ON b.location_sk = l.location_sk
+      WHERE l.location_sk IS NULL
+    mustBe: 0
+    
+  - name: unique_fact_location
+    description: Combination fact_id + location_sk phải unique
+    dimension: uniqueness
+    type: sql
+    query: |
+      SELECT COUNT(*) FROM (
+        SELECT fact_id, location_sk, COUNT(*) as cnt
+        FROM FactJobLocationBridge
+        GROUP BY fact_id, location_sk
+        HAVING COUNT(*) > 1
+      )
+    mustBe: 0
