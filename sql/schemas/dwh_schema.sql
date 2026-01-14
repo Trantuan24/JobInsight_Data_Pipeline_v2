@@ -15,7 +15,6 @@
 DROP INDEX IF EXISTS idx_bridge_location;
 DROP INDEX IF EXISTS idx_bridge_fact;
 DROP INDEX IF EXISTS idx_fact_load_month;
-DROP INDEX IF EXISTS idx_fact_observed;
 DROP INDEX IF EXISTS idx_fact_date;
 DROP INDEX IF EXISTS idx_dimlocation_city;
 DROP INDEX IF EXISTS idx_dimcompany_hash;
@@ -125,14 +124,12 @@ CREATE TABLE DimDate (
 -- ============================================
 
 -- FactJobPostingDaily: Main fact table
--- Grain: 1 job × 1 day (5 days: 1 observed + 4 projected)
+-- Grain: 1 job × 1 day (Pure Periodic Snapshot)
 CREATE TABLE FactJobPostingDaily (
     fact_id INTEGER PRIMARY KEY,
     job_sk INTEGER NOT NULL,               -- FK → DimJob
     company_sk INTEGER NOT NULL,           -- FK → DimCompany
     date_id DATE NOT NULL,                 -- FK → DimDate
-    
-    is_observed BOOLEAN NOT NULL,          -- TRUE = crawled, FALSE = projected
     
     -- Date FKs
     posted_date_id DATE,                   -- FK → DimDate
@@ -157,9 +154,6 @@ CREATE TABLE FactJobPostingDaily (
 
 CREATE INDEX idx_fact_date 
     ON FactJobPostingDaily(date_id);
-
-CREATE INDEX idx_fact_observed 
-    ON FactJobPostingDaily(date_id, is_observed);
 
 CREATE INDEX idx_fact_load_month 
     ON FactJobPostingDaily(load_month);

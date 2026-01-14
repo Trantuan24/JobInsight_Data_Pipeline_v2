@@ -7,24 +7,12 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from minio import Minio
 
-from src.config import DB_CONFIG, MINIO_CONFIG
+from src.config import DB_CONFIG
+from src.storage.minio import get_minio_client, ARCHIVE_BUCKET
 from src.storage.postgres import get_db_connection
 
 logger = logging.getLogger(__name__)
-
-ARCHIVE_BUCKET = "jobinsight-archive"
-
-
-def get_minio_client() -> Minio:
-    """Get MinIO client"""
-    return Minio(
-        MINIO_CONFIG["endpoint"],
-        access_key=MINIO_CONFIG["access_key"],
-        secret_key=MINIO_CONFIG["secret_key"],
-        secure=MINIO_CONFIG["secure"]
-    )
 
 
 def get_old_records(days: int = 30) -> pd.DataFrame:

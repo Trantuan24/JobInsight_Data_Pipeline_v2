@@ -1,10 +1,17 @@
 """
 FactJobPostingDaily fact processor.
+
+Design: Pure Periodic Snapshot (Kimball methodology)
+- Grain: 1 job × 1 ngày
+- Mỗi ngày mới:
+  1. Tạo facts cho TẤT CẢ jobs còn hạn (carry forward từ ngày trước)
+  2. Xử lý jobs mới từ staging (INSERT)
+  3. Xử lý jobs update từ staging (SCD2 cho dimensions)
 """
 
 import logging
 from datetime import datetime, date, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import duckdb
 import pandas as pd
@@ -20,18 +27,32 @@ def process_facts(
     caches: Dict[str, Dict]
 ) -> Dict[str, int]:
     """
-    Process FactJobPostingDaily with 5-day grain (1 observed + 4 projected).
-    """
-    stats = {'facts_created': 0, 'facts_updated': 0, 'skipped': 0}
+    Process FactJobPostingDaily as Pure Periodic Snapshot.
     
-    if staging_df.empty:
-        return stats
+    Logic:
+    1. Carry forward: Tạo facts cho jobs còn hạn từ ngày trước
+    2. Process staging: INSERT/UPDATE facts từ staging mới
+    """
+    stats = {
+        'carried_forward': 0,
+        'facts_created': 0, 
+        'facts_updated': 0, 
+        'skipped': 0,
+        'expired_skipped': 0
+    }
     
     today = date.today()
+    yesterday = today - timedelta(days=1)
     crawled_at = datetime.now()
     load_month = today.strftime('%Y-%m')
     
-    dates_to_create = [today + timedelta(days=i) for i in range(5)]
+    # Step 1: Carry forward - tạo facts cho jobs còn hạn
+    stats['carried_forward'] = _carry_forward_facts(conn, today, yesterday, crawled_at, load_month)
+    
+    # Step 2: Process staging data
+    if staging_df.empty:
+        logger.info(f"Facts: carried_forward={stats['carried_forward']}, no staging data")
+        return stats
     
     job_cache = caches.get('job', {})
     company_cache = caches.get('company', {})
@@ -67,34 +88,97 @@ def process_facts(
             except:
                 pass
         
-        for i, fact_date in enumerate(dates_to_create):
-            is_observed = (i == 0)
-            
-            result = _upsert_fact(
-                conn=conn,
-                job_sk=job_sk,
-                company_sk=company_sk,
-                date_id=fact_date,
-                is_observed=is_observed,
-                posted_date_id=posted_date_id,
-                due_date_id=due_date_id,
-                salary_min=job.get('salary_min'),
-                salary_max=job.get('salary_max'),
-                salary_type=job.get('salary_type'),
-                time_remaining=job.get('time_remaining'),
-                posted_time=posted_time,
-                due_date=due_date,
-                crawled_at=crawled_at,
-                load_month=load_month
-            )
-            
-            if result == 'created':
-                stats['facts_created'] += 1
-            elif result == 'updated':
-                stats['facts_updated'] += 1
+        # Check if job is expired
+        if due_date_id and due_date_id < today:
+            stats['expired_skipped'] += 1
+            continue
+        
+        # UPSERT fact for today
+        result = _upsert_fact(
+            conn=conn,
+            job_sk=job_sk,
+            company_sk=company_sk,
+            date_id=today,
+            posted_date_id=posted_date_id,
+            due_date_id=due_date_id,
+            salary_min=job.get('salary_min'),
+            salary_max=job.get('salary_max'),
+            salary_type=job.get('salary_type'),
+            time_remaining=job.get('time_remaining'),
+            posted_time=posted_time,
+            due_date=due_date,
+            crawled_at=crawled_at,
+            load_month=load_month
+        )
+        if result == 'created':
+            stats['facts_created'] += 1
+        elif result == 'updated':
+            stats['facts_updated'] += 1
     
-    logger.info(f"Facts: created={stats['facts_created']}, updated={stats['facts_updated']}, skipped={stats['skipped']}")
+    logger.info(f"Facts: carried_forward={stats['carried_forward']}, created={stats['facts_created']}, updated={stats['facts_updated']}, skipped={stats['skipped']}, expired={stats['expired_skipped']}")
     return stats
+
+
+def _carry_forward_facts(
+    conn: duckdb.DuckDBPyConnection,
+    today: date,
+    yesterday: date,
+    crawled_at: datetime,
+    load_month: str
+) -> int:
+    """
+    Carry forward facts từ ngày trước cho jobs còn hạn.
+    
+    Logic:
+    - Lấy tất cả jobs có fact ngày hôm qua
+    - Với mỗi job còn hạn (due_date >= today hoặc NULL) → tạo fact cho today
+    - Skip jobs đã hết hạn
+    """
+    # Get jobs from yesterday that are still valid
+    yesterday_jobs = conn.execute("""
+        SELECT 
+            f.job_sk, f.company_sk, f.posted_date_id, f.due_date_id,
+            f.salary_min, f.salary_max, f.salary_type, f.time_remaining,
+            f.posted_time, f.due_date
+        FROM FactJobPostingDaily f
+        WHERE f.date_id = ?
+        AND (f.due_date_id IS NULL OR f.due_date_id >= ?)
+    """, [yesterday, today]).fetchall()
+    
+    if not yesterday_jobs:
+        logger.info("No jobs to carry forward from yesterday")
+        return 0
+    
+    # Check which jobs already have fact for today
+    existing_today = set(r[0] for r in conn.execute("""
+        SELECT job_sk FROM FactJobPostingDaily WHERE date_id = ?
+    """, [today]).fetchall())
+    
+    carried = 0
+    for job in yesterday_jobs:
+        job_sk = job[0]
+        
+        # Skip if already has fact for today
+        if job_sk in existing_today:
+            continue
+        
+        conn.execute("""
+            INSERT INTO FactJobPostingDaily (
+                fact_id, job_sk, company_sk, date_id,
+                posted_date_id, due_date_id,
+                salary_min, salary_max, salary_type, time_remaining,
+                posted_time, due_date, crawled_at, load_month
+            ) VALUES (NEXTVAL('seq_fact_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            job_sk, job[1], today,  # job_sk, company_sk, date_id
+            job[2], job[3],  # posted_date_id, due_date_id
+            job[4], job[5], job[6], job[7],  # salary_min, salary_max, salary_type, time_remaining
+            job[8], job[9], crawled_at, load_month  # posted_time, due_date, crawled_at, load_month
+        ])
+        carried += 1
+    
+    logger.info(f"Carried forward {carried} facts from {yesterday} to {today}")
+    return carried
 
 
 def _upsert_fact(
@@ -102,7 +186,6 @@ def _upsert_fact(
     job_sk: int,
     company_sk: int,
     date_id: date,
-    is_observed: bool,
     posted_date_id: Optional[date],
     due_date_id: Optional[date],
     salary_min: Optional[float],
@@ -116,9 +199,6 @@ def _upsert_fact(
 ) -> str:
     """
     UPSERT a single fact record using DELETE + INSERT pattern.
-    
-    Note: DuckDB has a bug with UPDATE on tables with UNIQUE constraints.
-    Workaround: DELETE existing record then INSERT new one.
     """
     salary_min = float(salary_min) if pd.notna(salary_min) else None
     salary_max = float(salary_max) if pd.notna(salary_max) else None
@@ -138,13 +218,13 @@ def _upsert_fact(
         
         conn.execute("""
             INSERT INTO FactJobPostingDaily (
-                fact_id, job_sk, company_sk, date_id, is_observed,
+                fact_id, job_sk, company_sk, date_id,
                 posted_date_id, due_date_id,
                 salary_min, salary_max, salary_type, time_remaining,
                 posted_time, due_date, crawled_at, load_month
-            ) VALUES (NEXTVAL('seq_fact_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (NEXTVAL('seq_fact_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
-            job_sk, company_sk, date_id, is_observed,
+            job_sk, company_sk, date_id,
             posted_date_id, due_date_id,
             salary_min, salary_max, salary_type, time_remaining,
             posted_time, due_date, crawled_at, load_month
@@ -153,13 +233,13 @@ def _upsert_fact(
     else:
         conn.execute("""
             INSERT INTO FactJobPostingDaily (
-                fact_id, job_sk, company_sk, date_id, is_observed,
+                fact_id, job_sk, company_sk, date_id,
                 posted_date_id, due_date_id,
                 salary_min, salary_max, salary_type, time_remaining,
                 posted_time, due_date, crawled_at, load_month
-            ) VALUES (NEXTVAL('seq_fact_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (NEXTVAL('seq_fact_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
-            job_sk, company_sk, date_id, is_observed,
+            job_sk, company_sk, date_id,
             posted_date_id, due_date_id,
             salary_min, salary_max, salary_type, time_remaining,
             posted_time, due_date, crawled_at, load_month

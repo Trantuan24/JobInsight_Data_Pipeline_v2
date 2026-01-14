@@ -74,19 +74,26 @@ def process_dim_company(
             )
             
             if has_changes:
-                # SCD2: Close old record
-                conn.execute("""
-                    UPDATE DimCompany
-                    SET expiry_date = ?, is_current = FALSE
-                    WHERE company_sk = ?
-                """, [today, old_sk])
-                
-                # Insert new version
-                conn.execute("""
-                    INSERT INTO DimCompany (company_sk, company_bk_hash, company_name, company_url, logo_url, verified_employer, effective_date, is_current)
-                    VALUES (NEXTVAL('seq_dim_company_sk'), ?, ?, ?, ?, ?, ?, TRUE)
-                """, [bk_hash, company_name, new_url, new_logo, new_verified, today])
-                stats['updated'] += 1
+                # SCD2: Close old record and insert new version
+                # Use explicit transaction to avoid unique constraint issues
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    conn.execute("""
+                        UPDATE DimCompany
+                        SET expiry_date = ?, is_current = FALSE
+                        WHERE company_sk = ?
+                    """, [today, old_sk])
+                    
+                    conn.execute("""
+                        INSERT INTO DimCompany (company_sk, company_bk_hash, company_name, company_url, logo_url, verified_employer, effective_date, is_current)
+                        VALUES (NEXTVAL('seq_dim_company_sk'), ?, ?, ?, ?, ?, ?, TRUE)
+                    """, [bk_hash, company_name, new_url, new_logo, new_verified, today])
+                    conn.execute("COMMIT")
+                    stats['updated'] += 1
+                except Exception as e:
+                    conn.execute("ROLLBACK")
+                    logger.warning(f"SCD2 update failed for {company_name}: {e}")
+                    stats['unchanged'] += 1
             else:
                 stats['unchanged'] += 1
     

@@ -6,7 +6,7 @@ Main orchestrator for ETL process.
 import logging
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, Any, Optional
 
 import pandas as pd
@@ -33,8 +33,24 @@ DEFAULT_SCHEMA_PATH = 'sql/schemas/dwh_schema.sql'
 
 
 def _setup_schema(conn, schema_path: str = DEFAULT_SCHEMA_PATH) -> bool:
-    """Setup schema from SQL file."""
+    """
+    Setup schema - only create tables if they don't exist.
+    Does NOT drop existing tables to preserve data.
+    """
     try:
+        # Check if schema already exists by checking for DimJob table
+        result = conn.execute("""
+            SELECT COUNT(*) FROM information_schema.tables 
+            WHERE table_name = 'DimJob'
+        """).fetchone()
+        
+        if result and result[0] > 0:
+            logger.info("Schema already exists, skipping setup")
+            return True
+        
+        # Schema doesn't exist, create it
+        logger.info("Creating new schema...")
+        
         with open(schema_path, 'r', encoding='utf-8') as f:
             sql = f.read()
         
@@ -56,23 +72,27 @@ def _setup_schema(conn, schema_path: str = DEFAULT_SCHEMA_PATH) -> bool:
         return False
 
 
-def _get_staging_data(pg_conn_string: str, last_etl_date: Optional[datetime] = None) -> pd.DataFrame:
-    """Get staging data from PostgreSQL."""
+def _get_staging_data(pg_conn_string: str, crawl_date: Optional[date] = None) -> pd.DataFrame:
+    """
+    Get staging data from PostgreSQL.
+    
+    Chỉ lấy jobs crawl ngày hôm nay (hoặc ngày chỉ định).
+    """
     import psycopg2
     
-    if last_etl_date is None:
-        last_etl_date = datetime.now() - timedelta(days=7)
+    if crawl_date is None:
+        crawl_date = date.today()
     
     query = """
         SELECT *
         FROM jobinsight_staging.staging_jobs
-        WHERE crawled_at >= %s
+        WHERE DATE(crawled_at) = %s
     """
     
     try:
         with psycopg2.connect(pg_conn_string) as conn:
-            df = pd.read_sql(query, conn, params=[last_etl_date])
-        logger.info(f"Loaded {len(df)} records from staging")
+            df = pd.read_sql(query, conn, params=[crawl_date])
+        logger.info(f"Loaded {len(df)} records from staging for {crawl_date}")
         return df
     except Exception as e:
         logger.error(f"Failed to get staging data: {e}")
@@ -81,7 +101,7 @@ def _get_staging_data(pg_conn_string: str, last_etl_date: Optional[datetime] = N
 
 def run_etl(
     pg_conn_string: str,
-    last_etl_date: Optional[datetime] = None,
+    crawl_date: Optional[date] = None,
     force_new: bool = False
 ) -> Dict[str, Any]:
     """
@@ -90,8 +110,8 @@ def run_etl(
     Flow:
     1. Download DuckDB from MinIO (or create new)
     2. Backup to MinIO
-    3. Get staging data from PostgreSQL
-    4. Process dimensions & facts
+    3. Get staging data from PostgreSQL (only today's crawl)
+    4. Process dimensions & facts (carry forward + new)
     5. Upload DuckDB back to MinIO
     6. Export Parquet to MinIO
     """
@@ -116,8 +136,8 @@ def run_etl(
         if not force_new:
             result['backup_object'] = backup_duckdb(local_db_path)
         
-        # 3. Get staging data
-        staging_df = _get_staging_data(pg_conn_string, last_etl_date)
+        # 3. Get staging data (only today's crawl)
+        staging_df = _get_staging_data(pg_conn_string, crawl_date)
         result['stats']['staging_count'] = len(staging_df)
         
         if staging_df.empty:
