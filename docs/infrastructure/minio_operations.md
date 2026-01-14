@@ -121,16 +121,17 @@ docker-compose start minio
 
 ### 3.3 DWH Operations
 
-**Automated ETL Flow:**
+**Automated ETL Flow (Pure Periodic Snapshot):**
 ```
 1. Download dwh.duckdb từ MinIO (hoặc tạo mới)
 2. Backup existing database
-3. Query staging data từ PostgreSQL
-4. Process dimensions (SCD Type 2)
-5. Process facts (observed + projected)
-6. Process bridge tables
-7. Export Parquet partitions
-8. Upload dwh.duckdb back to MinIO
+3. Carry forward: Tạo facts cho jobs còn hạn từ ngày trước
+4. Query staging data từ PostgreSQL (chỉ jobs crawl ngày hôm nay)
+5. Process dimensions (SCD Type 2)
+6. Process facts (UPSERT cho ngày hôm nay)
+7. Process bridge tables
+8. Export Parquet partitions
+9. Upload dwh.duckdb back to MinIO
 ```
 
 **Manual trigger (when DAG exists):**
@@ -138,7 +139,7 @@ docker-compose start minio
 ```bash
 # Trigger DWH ETL DAG
 docker exec jobinsight-airflow-webserver-1 \
-  airflow dags trigger jobinsight_dwh_etl
+  airflow dags trigger jobinsight_dwh
 ```
 
 **Run directly from Python:**
@@ -171,10 +172,15 @@ with get_duckdb_connection(db_path) as conn:
     companies = conn.execute("SELECT COUNT(*) FROM DimCompany WHERE is_current=TRUE").fetchone()[0]
     print(f"Current jobs: {jobs}, companies: {companies}")
     
-    # Check observed vs projected
-    observed = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily WHERE is_observed=TRUE").fetchone()[0]
-    projected = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily WHERE is_observed=FALSE").fetchone()[0]
-    print(f"Observed: {observed}, Projected: {projected}")
+    # Check facts by date (Pure Periodic Snapshot - 1 record/job/ngày)
+    facts_by_date = conn.execute("""
+        SELECT date_id, COUNT(*) as count
+        FROM FactJobPostingDaily
+        WHERE date_id >= CURRENT_DATE - 7
+        GROUP BY date_id
+        ORDER BY date_id DESC
+    """).fetchdf()
+    print(f"Facts by date (last 7 days):\n{facts_by_date}")
 ```
 
 **Download Parquet exports:**
@@ -384,7 +390,7 @@ open http://localhost:9001
 |-----|----------|-------|
 | `jobinsight_pipeline` | Daily 6:00 AM | Upload HTML to MinIO |
 | `jobinsight_archive` | Weekly Sunday 2:00 AM | Archive old data to MinIO |
-| `jobinsight_dwh_etl` | Daily 8:00 AM (planned) | ETL Staging → DWH (DuckDB + Parquet) |
+| `jobinsight_dwh` | Daily 7:00 AM | ETL Staging → DWH (DuckDB + Parquet) |
 
 ---
 

@@ -178,7 +178,7 @@ upload_duckdb(db_path)
 |--------|-------------------|--------|
 | `jobinsight-raw` | `pipeline_dag.py` → `upload_html_to_minio()` | ✅ Production |
 | `jobinsight-archive` | `archive_dag.py` → `upload_archive_to_minio()` | ✅ Production |
-| `jobinsight-backup` | *Chưa implement* | 🚧 TODO |
+| `jobinsight-backup` | DWH backup trước ETL | ✅ Production |
 | `jobinsight-warehouse` | DWH ETL (`src/etl/warehouse/pipeline.py`) | ✅ Production |
 
 ---

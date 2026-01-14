@@ -14,10 +14,12 @@ domain: job-insight-dwh
 description:
   purpose: >
     Fact table chính của DWH, theo dõi trạng thái tin tuyển dụng theo ngày.
-    Grain: 1 job × 1 ngày. Mỗi job có 5 records (1 observed + 4 projected).
+    Design: Pure Periodic Snapshot (Kimball methodology).
+    Grain: 1 job × 1 ngày crawl. Mỗi ngày crawl tạo 1 record cho ngày đó.
   limitations: >
     - Dữ liệu chỉ từ TopCV, không bao gồm các nguồn khác
     - Salary có thể NULL nếu công ty không công khai
+    - Không có dữ liệu cho ngày không crawl (đúng với periodic snapshot)
   usage: >
     - Phân tích xu hướng tuyển dụng theo thời gian
     - Thống kê salary theo location, company
@@ -76,13 +78,6 @@ schema:
           column: date_id
         examples: ["2026-01-13", "2026-01-14"]
           
-      - name: is_observed
-        logicalType: boolean
-        physicalType: BOOLEAN
-        description: TRUE = crawled thực tế, FALSE = projected
-        nullable: false
-        examples: [true, false]
-        
       - name: posted_date_id
         logicalType: date
         physicalType: DATE
@@ -168,11 +163,6 @@ schema:
         columns: [date_id]
         unique: false
         description: Index cho filter/group theo ngày
-        
-      - name: idx_fact_observed
-        columns: [date_id, is_observed]
-        unique: false
-        description: Index cho filter observed/projected
         
       - name: idx_fact_load_month
         columns: [load_month]

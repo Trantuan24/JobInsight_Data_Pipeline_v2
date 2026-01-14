@@ -152,11 +152,12 @@ jobinsight-backup/
 **Cấu trúc:**
 ```
 jobinsight-warehouse/
-├── dwh.duckdb                           # DuckDB database (latest)
+├── dwh/
+│   └── jobinsight.duckdb                # DuckDB database (latest)
 ├── backups/
-│   └── dwh_backup_20250113_080000.duckdb
+│   └── dwh_backup_20260114_080000.duckdb
 └── parquet/
-    └── load_month=2025-01/
+    └── load_month=2026-01/
         ├── DimJob.parquet
         ├── DimCompany.parquet
         ├── DimLocation.parquet
@@ -170,6 +171,13 @@ jobinsight-warehouse/
 - Parquet optimized, không tốn nhiều storage
 - DuckDB database cho ad-hoc queries
 - Auto-backup trước mỗi ETL run
+
+**ETL Logic (Pure Periodic Snapshot):**
+```
+1. Carry forward: Tạo facts cho jobs còn hạn từ ngày trước
+2. Process staging: Chỉ lấy jobs crawl ngày hôm nay (DATE(crawled_at) = today)
+3. SCD2: Apply cho dimensions khi jobs được update
+```
 
 **Flow:**
 ```
@@ -300,6 +308,7 @@ mc mirror minio/jobinsight-archive /external/backup/
 | Thời gian | Task | Status |
 |-----------|------|--------|
 | 06:00 | Pipeline DAG (crawl → staging) | ✅ Production |
+| 07:00 | DWH DAG (staging → DWH) | ✅ Production |
 
 ### Daily (Planned)
 

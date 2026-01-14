@@ -26,10 +26,10 @@ Bus Matrix là công cụ lập kế hoạch Data Warehouse theo phương pháp 
 
 | Thuộc tính | Giá trị |
 |------------|---------|
-| **Grain** | 1 job × 1 ngày |
+| **Grain** | 1 job × 1 ngày crawl |
 | **Fact Type** | Periodic Snapshot |
-| **Mô tả** | Chụp trạng thái tin tuyển dụng theo ngày |
-| **Load** | Daily, 5 ngày/job (1 observed + 4 projected) |
+| **Mô tả** | Chụp trạng thái tin tuyển dụng theo ngày crawl |
+| **Load** | Daily, 1 record/job/ngày crawl |
 
 **Foreign Keys:**
 
@@ -48,7 +48,6 @@ Bus Matrix là công cụ lập kế hoạch Data Warehouse theo phương pháp 
 |---------|------|-------|
 | salary_min | Semi-additive | Lương tối thiểu (VND) |
 | salary_max | Semi-additive | Lương tối đa (VND) |
-| is_observed | Non-additive | TRUE=crawled, FALSE=projected |
 
 **Degenerate Dimensions:**
 
@@ -201,3 +200,5 @@ DuckDB/MinIO: Star Schema
 - [The Data Warehouse Toolkit](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/books/) - Sách của Ralph Kimball
 
 ---
+
+*Version: 1.2 | Cập nhật: 2026-01-14*
