@@ -4,7 +4,7 @@ import json
 import logging
 import psycopg2
 
-from .validators import ValidationResult
+from .validators import ValidationResult, BusinessRuleResult
 from .gates import GateResult
 
 logger = logging.getLogger(__name__)
@@ -41,4 +41,33 @@ class MetricsLogger:
             return True
         except Exception as e:
             logger.warning(f"Failed to log metrics: {e}")
+            return False
+    
+    def log_business_rules(self, result: BusinessRuleResult, dag_run_id: str = None) -> bool:
+        """Log business rule validation to quality_metrics table."""
+        try:
+            with psycopg2.connect(self.conn_string) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO monitoring.quality_metrics (
+                            validation_type, run_timestamp, dag_run_id, total_jobs, unique_jobs,
+                            duplicate_count, duplicate_rate, valid_jobs, invalid_jobs,
+                            valid_rate, field_missing_rates, raw_count, data_loss_rate,
+                            gate_status, gate_message
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """, (
+                        'business_rules', result.timestamp, dag_run_id,
+                        result.total_jobs, result.total_jobs,  # unique = total (not applicable)
+                        0, 0.0,  # duplicate not applicable
+                        int(result.total_jobs * (1 - result.violation_rate)),
+                        int(result.total_jobs * result.violation_rate),
+                        1 - result.violation_rate,
+                        json.dumps(result.violations),  # Store violations in field_missing_rates
+                        None, None,
+                        result.status, '; '.join(result.details) if result.details else None
+                    ))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to log business rules: {e}")
             return False

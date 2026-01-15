@@ -2,8 +2,8 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -157,3 +157,136 @@ class StagingValidator:
                 total_jobs=0, unique_jobs=0, duplicate_rate=0.0,
                 valid_jobs=0, valid_rate=0.0
             )
+
+
+@dataclass
+class BusinessRuleResult:
+    """Business rule validation result."""
+    timestamp: datetime
+    total_jobs: int
+    violations: Dict[str, int]  # rule_name -> count
+    violation_rate: float
+    status: str  # 'healthy', 'degraded', 'unhealthy'
+    details: List[str] = field(default_factory=list)
+
+
+class BusinessRuleValidator:
+    """Validate business rules on job data."""
+    
+    # Thresholds based on VN market
+    SALARY_HARD_CAP = 200_000_000      # 200M - hard fail
+    SALARY_WARNING_CAP = 500_000_000   # 500M - warning only
+    DEADLINE_HARD_DAYS = 180           # 6 months
+    DEADLINE_WARNING_DAYS = 90         # 3 months
+    MIN_TITLE_LENGTH = 5
+    MIN_COMPANY_LENGTH = 3
+    INVALID_LOCATIONS = {'', 'n/a', 'na', 'none'}  # lowercase for comparison
+    
+    def validate(self, jobs: List[Dict[str, Any]]) -> BusinessRuleResult:
+        """Validate business rules on parsed jobs."""
+        if not jobs:
+            return BusinessRuleResult(
+                timestamp=datetime.now(), total_jobs=0,
+                violations={}, violation_rate=0.0, status='healthy'
+            )
+        
+        violations: Dict[str, int] = {
+            'salary_invalid': 0,      # min < 0 or max < min
+            'salary_too_high': 0,     # > 200M (hard)
+            'salary_suspicious': 0,   # > 500M (warning)
+            'deadline_past': 0,       # deadline < today
+            'deadline_too_far': 0,    # > 180 days (hard)
+            'deadline_suspicious': 0, # > 90 days (warning)
+            'title_too_short': 0,     # < 5 chars
+            'company_too_short': 0,   # < 3 chars
+            'location_invalid': 0,    # empty or N/A
+        }
+        details = []
+        today = datetime.now().date()
+        
+        for job in jobs:
+            job_id = job.get('job_id', 'unknown')
+            
+            # Salary checks
+            salary_min = job.get('salary_min')
+            salary_max = job.get('salary_max')
+            if salary_min is not None and salary_max is not None:
+                if salary_min < 0 or salary_max < salary_min:
+                    violations['salary_invalid'] += 1
+                elif salary_max > self.SALARY_HARD_CAP:
+                    if salary_max > self.SALARY_WARNING_CAP:
+                        violations['salary_suspicious'] += 1
+                    else:
+                        violations['salary_too_high'] += 1
+            
+            # Deadline checks (parsed jobs use 'deadline' field)
+            deadline = job.get('deadline')
+            if deadline:
+                try:
+                    if isinstance(deadline, str):
+                        deadline = datetime.strptime(deadline, '%Y-%m-%d').date()
+                    elif isinstance(deadline, datetime):
+                        deadline = deadline.date()
+                    
+                    days_until = (deadline - today).days
+                    if days_until < 0:
+                        violations['deadline_past'] += 1
+                    elif days_until > self.DEADLINE_HARD_DAYS:
+                        violations['deadline_too_far'] += 1
+                    elif days_until > self.DEADLINE_WARNING_DAYS:
+                        violations['deadline_suspicious'] += 1
+                except (ValueError, TypeError):
+                    pass  # Invalid date format, skip
+            
+            # Title length
+            title = job.get('title', '')
+            if len(str(title).strip()) < self.MIN_TITLE_LENGTH:
+                violations['title_too_short'] += 1
+            
+            # Company name length
+            company = job.get('company_name', '')
+            if len(str(company).strip()) < self.MIN_COMPANY_LENGTH:
+                violations['company_too_short'] += 1
+            
+            # Location check (normalize to lowercase)
+            location = job.get('location')
+            location_str = str(location).strip().lower() if location else ''
+            if not location_str or location_str in self.INVALID_LOCATIONS:
+                violations['location_invalid'] += 1
+        
+        # Calculate violation rate (hard violations only)
+        hard_violations = (
+            violations['salary_invalid'] + violations['salary_too_high'] +
+            violations['deadline_past'] + violations['deadline_too_far'] +
+            violations['title_too_short'] + violations['company_too_short'] +
+            violations['location_invalid']
+        )
+        warning_violations = violations['salary_suspicious'] + violations['deadline_suspicious']
+        
+        total = len(jobs)
+        violation_rate = hard_violations / total
+        
+        # Determine status
+        if violation_rate > 0.10:  # >10% hard violations = unhealthy
+            status = 'unhealthy'
+        elif violation_rate > 0.05 or warning_violations > total * 0.10:
+            status = 'degraded'
+        else:
+            status = 'healthy'
+        
+        # Log summary
+        if hard_violations > 0:
+            details.append(f"Hard violations: {hard_violations}/{total}")
+        if warning_violations > 0:
+            details.append(f"Warnings: {warning_violations}/{total}")
+        
+        logger.info(f"Business rules: {total} jobs, {violation_rate:.1%} violations, status={status}")
+        
+        return BusinessRuleResult(
+            timestamp=datetime.now(),
+            total_jobs=total,
+            violations={k: v for k, v in violations.items() if v > 0},
+            violation_rate=violation_rate,
+            status=status,
+            details=details
+        )

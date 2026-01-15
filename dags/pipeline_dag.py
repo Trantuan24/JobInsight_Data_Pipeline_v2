@@ -109,7 +109,7 @@ def parse_task(**kwargs):
 def validate_crawl_task(**kwargs):
     """Validate crawl data quality before saving to DB"""
     from src.quality import (
-        CrawlValidator, QualityGate, MetricsLogger, GateResult,
+        CrawlValidator, BusinessRuleValidator, QualityGate, MetricsLogger, GateResult,
         ValidationHardFailError
     )
     
@@ -118,18 +118,36 @@ def validate_crawl_task(**kwargs):
     dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
     
     logger.info(f"Validating {len(jobs)} jobs...")
+    metrics_logger = MetricsLogger(PG_CONN_STRING)
     
-    # Validate and evaluate
+    # Crawl validation (structure)
     result = CrawlValidator().validate(jobs)
     
     try:
         gate_result = QualityGate().evaluate(result)
     except ValidationHardFailError as e:
-        MetricsLogger(PG_CONN_STRING).log(result, GateResult('failed', result.valid_rate, str(e)), dag_run_id)
+        metrics_logger.log(result, GateResult('failed', result.valid_rate, str(e)), dag_run_id)
         raise
     
-    MetricsLogger(PG_CONN_STRING).log(result, gate_result, dag_run_id)
-    return {'status': gate_result.status, 'total_jobs': result.total_jobs, 'valid_rate': result.valid_rate}
+    metrics_logger.log(result, gate_result, dag_run_id)
+    
+    # Business rule validation
+    br_result = BusinessRuleValidator().validate(jobs)
+    metrics_logger.log_business_rules(br_result, dag_run_id)
+    
+    if br_result.status == 'unhealthy':
+        logger.error(f"Business rules failed: {br_result.violations}")
+        raise ValidationHardFailError(f"Business rule violations: {br_result.violation_rate:.1%}")
+    elif br_result.status == 'degraded':
+        logger.warning(f"Business rules warning: {br_result.violations}")
+    
+    return {
+        'status': gate_result.status,
+        'total_jobs': result.total_jobs,
+        'valid_rate': result.valid_rate,
+        'business_rules': br_result.status,
+        'violations': br_result.violations
+    }
 
 
 def upsert_raw_task(**kwargs):
