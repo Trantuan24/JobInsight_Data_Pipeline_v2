@@ -74,6 +74,31 @@ CREATE TABLE IF NOT EXISTS monitoring.data_quality (
 
 CREATE INDEX IF NOT EXISTS idx_dq_status_time ON monitoring.data_quality(status, checked_at DESC);
 
+-- Quality metrics (crawl & staging validation)
+CREATE TABLE IF NOT EXISTS monitoring.quality_metrics (
+    id SERIAL PRIMARY KEY,
+    validation_type VARCHAR(20) DEFAULT 'crawl',  -- 'crawl' or 'staging'
+    run_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+    dag_run_id VARCHAR(100),
+    total_jobs INT NOT NULL,
+    unique_jobs INT NOT NULL,
+    duplicate_count INT NOT NULL,
+    duplicate_rate DECIMAL(5,4) NOT NULL,
+    valid_jobs INT NOT NULL,
+    invalid_jobs INT NOT NULL,
+    valid_rate DECIMAL(5,4) NOT NULL,
+    field_missing_rates JSONB,
+    raw_count INT,
+    data_loss_rate DECIMAL(5,4),
+    gate_status VARCHAR(20) NOT NULL,  -- success, warning, failed
+    gate_message TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_qm_type ON monitoring.quality_metrics(validation_type);
+CREATE INDEX IF NOT EXISTS idx_qm_timestamp ON monitoring.quality_metrics(run_timestamp);
+CREATE INDEX IF NOT EXISTS idx_qm_status ON monitoring.quality_metrics(gate_status);
+
 -- Views
 CREATE OR REPLACE VIEW monitoring.vw_pipeline_health AS
 SELECT 
