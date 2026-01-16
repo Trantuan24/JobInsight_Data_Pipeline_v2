@@ -59,34 +59,46 @@ def run_dwh_etl_task(**kwargs):
     2. Process staging: Chỉ lấy jobs crawl ngày hôm nay
     """
     from src.etl.warehouse import run_etl
+    from src.monitoring import ETLMetricsLogger
     from datetime import date
     
-    # Check if reset/force_new requested
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
     force_new = kwargs.get('force_new', False)
     
-    # Get crawl_date - mặc định là hôm nay
     crawl_date = kwargs.get('crawl_date')
     if crawl_date is None:
         crawl_date = date.today()
     elif isinstance(crawl_date, str):
         crawl_date = date.fromisoformat(crawl_date)
     
-    logger.info(f"Starting DWH ETL (crawl_date={crawl_date}, force_new={force_new})...")
-    
-    result = run_etl(
-        pg_conn_string=PG_CONN_STRING,
-        crawl_date=crawl_date,
-        force_new=force_new
-    )
-    
-    if result['success']:
-        logger.info(f"DWH ETL completed in {result['duration_seconds']:.2f}s")
-        logger.info(f"Stats: {result.get('stats', {})}")
-    else:
-        logger.error(f"DWH ETL failed: {result.get('message', 'Unknown error')}")
-        raise Exception(result.get('message', 'DWH ETL failed'))
-    
-    return result
+    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_dwh', 'run_dwh_etl', dag_run_id) as metrics:
+        logger.info(f"Starting DWH ETL (crawl_date={crawl_date}, force_new={force_new})...")
+        
+        result = run_etl(
+            pg_conn_string=PG_CONN_STRING,
+            crawl_date=crawl_date,
+            force_new=force_new
+        )
+        
+        if result['success']:
+            stats = result.get('stats', {})
+            facts_created = stats.get('facts', {}).get('facts_created', 0)
+            metrics.rows_out = facts_created
+            metrics.rows_inserted = facts_created
+            metrics.metadata = {
+                'dim_job': stats.get('dim_job', {}),
+                'dim_company': stats.get('dim_company', {}),
+                'dim_location': stats.get('dim_location', {}),
+                'facts': stats.get('facts', {}),
+                'bridges': stats.get('bridges', {})
+            }
+            logger.info(f"DWH ETL completed in {result['duration_seconds']:.2f}s")
+            logger.info(f"Stats: {stats}")
+        else:
+            logger.error(f"DWH ETL failed: {result.get('message', 'Unknown error')}")
+            raise Exception(result.get('message', 'DWH ETL failed'))
+        
+        return result
 
 
 def validate_dwh_task(**kwargs):

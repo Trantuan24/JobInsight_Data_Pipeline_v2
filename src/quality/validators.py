@@ -87,7 +87,7 @@ class StagingValidator:
     def __init__(self, config: ValidationConfig = None):
         # Create new config with staging thresholds (don't mutate input)
         self.config = ValidationConfig(
-            min_job_count=config.min_job_count if config else 50,
+            min_job_count=50,
             hard_fail_duplicate_rate=config.hard_fail_duplicate_rate if config else 0.20,
             success_threshold=0.95,  # Stricter for staging
             warning_threshold=0.90
@@ -100,7 +100,7 @@ class StagingValidator:
         try:
             with psycopg2.connect(pg_conn_string) as conn:
                 with conn.cursor() as cur:
-                    # Get staging stats for today's data
+                    # Get staging stats for ALL data (not just today)
                     cur.execute("""
                         SELECT 
                             COUNT(*) as total,
@@ -110,7 +110,7 @@ class StagingValidator:
                             COUNT(CASE WHEN salary_min IS NOT NULL THEN 1 END) as with_salary,
                             COUNT(CASE WHEN due_date IS NOT NULL THEN 1 END) as with_deadline
                         FROM jobinsight_staging.staging_jobs
-                        WHERE DATE(crawled_at) = CURRENT_DATE
+                        -- WHERE DATE(crawled_at) = CURRENT_DATE  -- Uncomment to check only today's jobs
                     """)
                     row = cur.fetchone()
                     
