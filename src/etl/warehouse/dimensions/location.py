@@ -92,7 +92,7 @@ def process_dim_location(
     staging_df: pd.DataFrame
 ) -> Dict[str, int]:
     """
-    Process DimLocation (no SCD2, simple INSERT).
+    Process DimLocation (no SCD2, simple INSERT) - batch processing.
     
     Unknown record (SK=-1) already created in schema.
     """
@@ -101,18 +101,26 @@ def process_dim_location(
     if staging_df.empty:
         return stats
     
+    # Collect all city-country pairs
     city_country_pairs = set()
     for loc in staging_df['location'].dropna():
         parsed = parse_location(loc)
         for city, country in parsed:
             city_country_pairs.add((city, country))
     
-    for city, country in city_country_pairs:
-        existing = conn.execute("""
-            SELECT location_sk FROM DimLocation WHERE city = ? AND country = ?
-        """, [city, country]).fetchone()
-        
-        if not existing:
+    if not city_country_pairs:
+        return stats
+    
+    # Batch fetch all existing locations
+    pairs_list = list(city_country_pairs)
+    existing_rows = conn.execute("""
+        SELECT city, country FROM DimLocation
+    """).fetchall()
+    existing_set = {(row[0], row[1]) for row in existing_rows}
+    
+    # Insert only new locations
+    for city, country in pairs_list:
+        if (city, country) not in existing_set:
             conn.execute("""
                 INSERT INTO DimLocation (location_sk, city, country)
                 VALUES (NEXTVAL('seq_dim_location_sk'), ?, ?)

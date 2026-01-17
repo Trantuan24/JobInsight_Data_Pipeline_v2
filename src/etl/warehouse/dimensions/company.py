@@ -14,10 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def compute_company_hash(company_name: str) -> str:
-    """
-    Compute business key hash for company.
-    Hash name-only because TopCV creates multiple URLs for same company.
-    """
+    """Compute business key hash for company."""
     if not company_name:
         return hashlib.md5(b'unknown').hexdigest()
     return hashlib.md5(company_name.lower().strip().encode('utf-8')).hexdigest()
@@ -28,7 +25,7 @@ def process_dim_company(
     staging_df: pd.DataFrame
 ) -> Dict[str, int]:
     """
-    Process DimCompany with SCD Type 2.
+    Process DimCompany with SCD Type 2 (batch processing).
     
     Business key: company_bk_hash = MD5(LOWER(company_name))
     Compare columns: company_url, logo_url, verified_employer
@@ -41,22 +38,32 @@ def process_dim_company(
     
     companies = staging_df.drop_duplicates(subset=['company_name_standardized']).copy()
     
+    # Build hash map
+    hash_to_company = {}
     for _, company in companies.iterrows():
+        name = company.get('company_name_standardized', '')
+        if name:
+            hash_to_company[compute_company_hash(name)] = company
+    
+    if not hash_to_company:
+        return stats
+    
+    # Batch fetch all existing records
+    hashes = list(hash_to_company.keys())
+    placeholders = ','.join(['?'] * len(hashes))
+    existing_rows = conn.execute(f"""
+        SELECT company_bk_hash, company_sk, company_url, logo_url, verified_employer
+        FROM DimCompany WHERE company_bk_hash IN ({placeholders}) AND is_current = TRUE
+    """, hashes).fetchall()
+    existing_map = {row[0]: row for row in existing_rows}
+    
+    for bk_hash, company in hash_to_company.items():
         company_name = company.get('company_name_standardized', '')
-        if not company_name:
-            continue
-        
-        bk_hash = compute_company_hash(company_name)
-        
-        existing = conn.execute("""
-            SELECT company_sk, company_url, logo_url, verified_employer
-            FROM DimCompany
-            WHERE company_bk_hash = ? AND is_current = TRUE
-        """, [bk_hash]).fetchone()
-        
         new_url = company.get('company_url', '')
         new_logo = company.get('logo_url', '')
         new_verified = bool(company.get('verified_employer', False))
+        
+        existing = existing_map.get(bk_hash)
         
         if not existing:
             conn.execute("""
@@ -65,7 +72,7 @@ def process_dim_company(
             """, [bk_hash, company_name, new_url, new_logo, new_verified, today])
             stats['inserted'] += 1
         else:
-            old_sk, old_url, old_logo, old_verified = existing
+            _, old_sk, old_url, old_logo, old_verified = existing
             
             has_changes = (
                 str(old_url or '') != str(new_url or '') or
@@ -74,16 +81,11 @@ def process_dim_company(
             )
             
             if has_changes:
-                # SCD2: Close old record and insert new version
-                # Use explicit transaction to avoid unique constraint issues
                 conn.execute("BEGIN TRANSACTION")
                 try:
                     conn.execute("""
-                        UPDATE DimCompany
-                        SET expiry_date = ?, is_current = FALSE
-                        WHERE company_sk = ?
+                        UPDATE DimCompany SET expiry_date = ?, is_current = FALSE WHERE company_sk = ?
                     """, [today, old_sk])
-                    
                     conn.execute("""
                         INSERT INTO DimCompany (company_sk, company_bk_hash, company_name, company_url, logo_url, verified_employer, effective_date, is_current)
                         VALUES (NEXTVAL('seq_dim_company_sk'), ?, ?, ?, ?, ?, ?, TRUE)

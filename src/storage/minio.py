@@ -193,7 +193,7 @@ def get_duckdb_connection(local_path: str = None) -> duckdb.DuckDBPyConnection:
 
 
 def backup_duckdb(local_path: str) -> Optional[str]:
-    """Backup DuckDB to MinIO. Keeps last 5 backups."""
+    """Backup DuckDB to MinIO. Keeps last RETENTION_BACKUP_DAYS backups."""
     if not os.path.exists(local_path):
         return None
     
@@ -208,10 +208,11 @@ def backup_duckdb(local_path: str) -> Optional[str]:
         client.fput_object(BACKUP_BUCKET, backup_object, local_path)
         logger.info(f"Backed up DuckDB: {backup_object}")
         
-        # Cleanup old backups
+        # Cleanup old backups (keep last N based on env var)
+        max_backups = int(os.environ.get('RETENTION_BACKUP_DAYS', '7'))
         objects = list(client.list_objects(BACKUP_BUCKET, prefix=BACKUP_PREFIX))
         backups = sorted([o.object_name for o in objects if o.object_name.endswith('.duckdb')])
-        while len(backups) > 5:
+        while len(backups) > max_backups:
             client.remove_object(BACKUP_BUCKET, backups.pop(0))
         
         return backup_object

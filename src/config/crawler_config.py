@@ -10,7 +10,7 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 # Crawler settings
 BASE_URL = "https://www.topcv.vn/viec-lam-it"
 NUM_PAGES = int(os.getenv("CRAWLER_NUM_PAGES", "5"))
-CONCURRENT_PAGES = 2
+CONCURRENT_PAGES = int(os.getenv("CRAWLER_CONCURRENT_PAGES", "2"))
 PAGE_TIMEOUT = 60000
 SELECTOR_TIMEOUT = 20000
 MIN_DELAY = 3

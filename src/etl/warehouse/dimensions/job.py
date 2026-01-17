@@ -18,7 +18,7 @@ def process_dim_job(
     staging_df: pd.DataFrame
 ) -> Dict[str, int]:
     """
-    Process DimJob with SCD Type 2.
+    Process DimJob with SCD Type 2 (batch processing).
     
     Compare columns: title, skills, job_url
     """
@@ -29,17 +29,23 @@ def process_dim_job(
         return stats
     
     jobs = staging_df.drop_duplicates(subset=['job_id']).copy()
+    job_ids = [str(j) for j in jobs['job_id'].dropna().tolist()]
+    
+    if not job_ids:
+        return stats
+    
+    # Batch fetch all existing records
+    placeholders = ','.join(['?'] * len(job_ids))
+    existing_rows = conn.execute(f"""
+        SELECT job_id, job_sk, title, skills, job_url
+        FROM DimJob WHERE job_id IN ({placeholders}) AND is_current = TRUE
+    """, job_ids).fetchall()
+    existing_map = {row[0]: row for row in existing_rows}
     
     for _, job in jobs.iterrows():
         job_id = str(job.get('job_id', ''))
         if not job_id:
             continue
-        
-        existing = conn.execute("""
-            SELECT job_sk, title, skills, job_url
-            FROM DimJob
-            WHERE job_id = ? AND is_current = TRUE
-        """, [job_id]).fetchone()
         
         new_title = job.get('title_clean', '')
         new_skills = job.get('skills')
@@ -51,6 +57,8 @@ def process_dim_job(
         else:
             new_skills_str = str(new_skills) if new_skills else None
         
+        existing = existing_map.get(job_id)
+        
         if not existing:
             conn.execute("""
                 INSERT INTO DimJob (job_sk, job_id, title, job_url, skills, effective_date, is_current)
@@ -58,7 +66,7 @@ def process_dim_job(
             """, [job_id, new_title, new_url, new_skills_str, today])
             stats['inserted'] += 1
         else:
-            old_sk, old_title, old_skills, old_url = existing
+            _, old_sk, old_title, old_skills, old_url = existing
             
             has_changes = (
                 str(old_title or '') != str(new_title or '') or
@@ -67,16 +75,11 @@ def process_dim_job(
             )
             
             if has_changes:
-                # SCD2: Close old record and insert new version
-                # Use explicit transaction to avoid unique constraint issues
                 conn.execute("BEGIN TRANSACTION")
                 try:
                     conn.execute("""
-                        UPDATE DimJob
-                        SET expiry_date = ?, is_current = FALSE
-                        WHERE job_sk = ?
+                        UPDATE DimJob SET expiry_date = ?, is_current = FALSE WHERE job_sk = ?
                     """, [today, old_sk])
-                    
                     conn.execute("""
                         INSERT INTO DimJob (job_sk, job_id, title, job_url, skills, effective_date, is_current)
                         VALUES (NEXTVAL('seq_dim_job_sk'), ?, ?, ?, ?, ?, TRUE)
