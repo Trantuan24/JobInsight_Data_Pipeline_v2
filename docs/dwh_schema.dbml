@@ -79,7 +79,6 @@ Table fact_job_posting_daily {
   job_sk int [not null, ref: > dim_job.job_sk]
   company_sk int [not null, ref: > dim_company.company_sk]
   date_id date [not null, ref: > dim_date.date_id]
-  is_observed boolean [not null, note: "TRUE = crawled, FALSE = projected"]
   posted_date_id date [ref: > dim_date.date_id]
   due_date_id date [ref: > dim_date.date_id]
   salary_min numeric
@@ -97,7 +96,7 @@ Table fact_job_posting_daily {
     (load_month) [name: "idx_fact_load_month"]
   }
 
-  note: "Grain: 1 job × 1 day (5 days: 1 observed + 4 projected)"
+  note: "Grain: 1 job × 1 ngày crawl (Pure Periodic Snapshot)"
 }
 
 Table fact_job_location_bridge {

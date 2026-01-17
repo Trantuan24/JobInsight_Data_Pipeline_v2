@@ -1,31 +1,20 @@
 """
-JobInsight DWH DAG - Staging → Data Warehouse
-Schedule: Daily at 7:00 AM Vietnam time (sau pipeline_dag)
+JobInsight Pipeline DAG - Crawl TopCV → Raw → Staging
+Schedule: Daily at 6:00 AM Vietnam time
 
 Flow:
-1. Download DuckDB từ MinIO
-2. Backup DuckDB lên MinIO
-3. Process Dimensions (SCD Type 2)
-4. Process Facts (Pure Periodic Snapshot - 1 record/job/ngày)
-5. Process Bridges
-6. Upload DuckDB lên MinIO
-7. Export Parquet lên MinIO
-
-Design: Pure Periodic Snapshot (Kimball methodology)
-- Grain: 1 job × 1 ngày crawl
-- Mỗi ngày crawl chỉ tạo 1 record cho ngày đó
-- KHÔNG tạo projected records
-
-Data stored on MinIO:
-- jobinsight-warehouse/dwh/jobinsight.duckdb
-- jobinsight-warehouse/parquet/load_month=YYYY-MM/facts.parquet
-- jobinsight-backup/dwh_backups/...
+1. Crawl TopCV pages
+2. Upload HTML to MinIO (backup)
+3. Parse HTML → jobs
+4. Validate crawl data (quality gate)
+5. Upsert to raw_jobs
+6. Transform to staging_jobs
+7. Validate staging data (quality gate)
 """
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 import logging
 import os
 import sys
@@ -49,221 +38,257 @@ default_args = {
 }
 
 
-def run_dwh_etl_task(**kwargs):
-    """
-    Run full DWH ETL pipeline.
-    Downloads DuckDB from MinIO, processes data, uploads back.
-    
-    Logic mới:
-    1. Carry forward: Tạo facts cho jobs còn hạn từ ngày trước
-    2. Process staging: Chỉ lấy jobs crawl ngày hôm nay
-    """
-    from src.etl.warehouse import run_etl
+def crawl_task(**kwargs):
+    """Crawl TopCV pages"""
+    import asyncio
+    from src.data_sources.topcv import scrape_pages
     from src.monitoring import ETLMetricsLogger
-    from datetime import date
     
     dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
-    force_new = kwargs.get('force_new', False)
+    num_pages = kwargs.get('num_pages', 10)
     
-    crawl_date = kwargs.get('crawl_date')
-    if crawl_date is None:
-        crawl_date = date.today()
-    elif isinstance(crawl_date, str):
-        crawl_date = date.fromisoformat(crawl_date)
+    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_pipeline', 'crawl', dag_run_id) as metrics:
+        logger.info(f"Starting crawl of {num_pages} pages...")
+        metrics.rows_in = num_pages
+        
+        results = asyncio.run(scrape_pages(num_pages=num_pages, parallel=True))
+        
+        success_count = sum(1 for r in results if r.get("success"))
+        metrics.rows_out = success_count
+        metrics.rows_failed = num_pages - success_count
+        
+        logger.info(f"Crawl completed: {success_count}/{num_pages} pages successful")
+        
+        html_data = [
+            {"page": r["page"], "html": r["html"], "size": r["size"]}
+            for r in results if r.get("success")
+        ]
+        
+        kwargs['ti'].xcom_push(key='html_data', value=html_data)
+        return {"success": success_count, "failed": len(results) - success_count}
+
+
+def upload_minio_task(**kwargs):
+    """Upload HTML to MinIO"""
+    from src.storage import upload_html
     
-    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_dwh', 'run_dwh_etl', dag_run_id) as metrics:
-        logger.info(f"Starting DWH ETL (crawl_date={crawl_date}, force_new={force_new})...")
+    ti = kwargs['ti']
+    html_data = ti.xcom_pull(key='html_data', task_ids='crawl')
+    
+    if not html_data:
+        logger.warning("No HTML data to upload")
+        return {"uploaded": 0}
+    
+    uploaded = 0
+    for item in html_data:
+        result = upload_html(item["html"], item["page"])
+        if result.get("success"):
+            uploaded += 1
+    
+    logger.info(f"Uploaded {uploaded} files to MinIO")
+    return {"uploaded": uploaded}
+
+
+def parse_task(**kwargs):
+    """Parse HTML and extract jobs"""
+    from src.data_sources.topcv import parse_html
+    from src.monitoring import ETLMetricsLogger
+    
+    ti = kwargs['ti']
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
+    html_data = ti.xcom_pull(key='html_data', task_ids='crawl')
+    
+    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_pipeline', 'parse', dag_run_id) as metrics:
+        if not html_data:
+            logger.warning("No HTML data to parse")
+            return {"jobs": 0}
         
-        result = run_etl(
-            pg_conn_string=PG_CONN_STRING,
-            crawl_date=crawl_date,
-            force_new=force_new
-        )
+        metrics.rows_in = len(html_data)
+        all_jobs = []
+        for item in html_data:
+            jobs = parse_html(item["html"])
+            logger.info(f"Page {item['page']}: parsed {len(jobs)} jobs")
+            all_jobs.extend(jobs)
         
-        if result['success']:
-            stats = result.get('stats', {})
-            metrics.rows_out = stats.get('facts', {}).get('inserted', 0)
-            metrics.rows_inserted = stats.get('facts', {}).get('inserted', 0)
-            metrics.metadata = {
-                'dim_job': stats.get('dim_job', {}),
-                'dim_company': stats.get('dim_company', {}),
-                'dim_location': stats.get('dim_location', {}),
-                'facts': stats.get('facts', {}),
-                'bridges': stats.get('bridges', {})
-            }
-            logger.info(f"DWH ETL completed in {result['duration_seconds']:.2f}s")
-            logger.info(f"Stats: {stats}")
-        else:
-            logger.error(f"DWH ETL failed: {result.get('message', 'Unknown error')}")
-            raise Exception(result.get('message', 'DWH ETL failed'))
+        seen = set()
+        unique_jobs = [j for j in all_jobs if j['job_id'] not in seen and not seen.add(j['job_id'])]
         
+        metrics.rows_out = len(unique_jobs)
+        logger.info(f"Total unique jobs: {len(unique_jobs)}")
+        ti.xcom_push(key='jobs', value=unique_jobs)
+        return {"jobs_parsed": len(unique_jobs)}
+
+
+def validate_crawl_task(**kwargs):
+    """Validate crawl data quality before saving to DB"""
+    from src.quality import (
+        CrawlValidator, BusinessRuleValidator, QualityGate, MetricsLogger, GateResult,
+        ValidationHardFailError
+    )
+    
+    ti = kwargs['ti']
+    jobs = ti.xcom_pull(key='jobs', task_ids='parse') or []
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
+    
+    logger.info(f"Validating {len(jobs)} jobs...")
+    metrics_logger = MetricsLogger(PG_CONN_STRING)
+    
+    # Crawl validation (structure)
+    result = CrawlValidator().validate(jobs)
+    
+    try:
+        gate_result = QualityGate().evaluate(result)
+    except ValidationHardFailError as e:
+        metrics_logger.log(result, GateResult('failed', result.valid_rate, str(e)), dag_run_id)
+        raise
+    
+    metrics_logger.log(result, gate_result, dag_run_id)
+    
+    # Business rule validation
+    br_result = BusinessRuleValidator().validate(jobs)
+    metrics_logger.log_business_rules(br_result, dag_run_id)
+    
+    if br_result.status == 'unhealthy':
+        logger.error(f"Business rules failed: {br_result.violations}")
+        raise ValidationHardFailError(f"Business rule violations: {br_result.violation_rate:.1%}")
+    elif br_result.status == 'degraded':
+        logger.warning(f"Business rules warning: {br_result.violations}")
+    
+    return {
+        'status': gate_result.status,
+        'total_jobs': result.total_jobs,
+        'valid_rate': result.valid_rate,
+        'business_rules': br_result.status,
+        'violations': br_result.violations
+    }
+
+
+def upsert_raw_task(**kwargs):
+    """Upsert jobs to raw_jobs table"""
+    from src.data_sources.topcv import jobs_to_dataframe
+    from src.storage import bulk_upsert
+    from src.monitoring import ETLMetricsLogger
+    
+    ti = kwargs['ti']
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
+    jobs = ti.xcom_pull(key='jobs', task_ids='parse')
+    
+    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_pipeline', 'upsert_raw', dag_run_id) as metrics:
+        if not jobs:
+            logger.warning("No jobs to insert")
+            return {"inserted": 0, "updated": 0, "unchanged": 0}
+        
+        metrics.rows_in = len(jobs)
+        df = jobs_to_dataframe(jobs)
+        logger.info(f"DataFrame shape: {df.shape}")
+        
+        result = bulk_upsert(df)
+        metrics.rows_out = result.get('inserted', 0) + result.get('updated', 0)
+        metrics.rows_inserted = result.get('inserted', 0)
+        metrics.rows_updated = result.get('updated', 0)
+        
+        logger.info(f"Raw DB: {result['inserted']} inserted, {result['updated']} updated")
         return result
 
 
-def validate_dwh_task(**kwargs):
-    """Validate DWH data quality after ETL."""
-    from src.storage.minio import download_duckdb, get_duckdb_connection
-    import os
+def transform_staging_task(**kwargs):
+    """Transform raw_jobs to staging_jobs"""
+    from src.etl.staging import run_staging_pipeline
+    from src.monitoring import ETLMetricsLogger
     
-    logger.info("Validating DWH data...")
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
     
-    # Download DuckDB for validation
-    local_path = download_duckdb()
-    
-    try:
-        with get_duckdb_connection(local_path) as conn:
-            # Check record counts
-            counts = {}
-            for table in ['DimJob', 'DimCompany', 'DimLocation', 'DimDate', 'FactJobPostingDaily', 'FactJobLocationBridge']:
-                result = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
-                counts[table] = result[0] if result else 0
-            
-            logger.info(f"Table counts: {counts}")
-            
-            # Check for orphan facts
-            orphan_jobs = conn.execute("""
-                SELECT COUNT(*) FROM FactJobPostingDaily f
-                LEFT JOIN DimJob j ON f.job_sk = j.job_sk
-                WHERE j.job_sk IS NULL
-            """).fetchone()[0]
-            
-            orphan_companies = conn.execute("""
-                SELECT COUNT(*) FROM FactJobPostingDaily f
-                LEFT JOIN DimCompany c ON f.company_sk = c.company_sk
-                WHERE c.company_sk IS NULL
-            """).fetchone()[0]
-            
-            # Check facts by date (Pure Periodic Snapshot)
-            facts_by_date = conn.execute("""
-                SELECT 
-                    date_id,
-                    COUNT(*) as count
-                FROM FactJobPostingDaily
-                WHERE date_id >= CURRENT_DATE - 7
-                GROUP BY date_id
-                ORDER BY date_id DESC
-            """).fetchdf()
-            
-            logger.info(f"Facts by date (last 7 days): {facts_by_date.to_dict()}")
-            
-            validation_result = {
-                'counts': counts,
-                'orphan_jobs': orphan_jobs,
-                'orphan_companies': orphan_companies,
-                'is_valid': orphan_jobs == 0 and orphan_companies == 0
-            }
-            
-            if not validation_result['is_valid']:
-                logger.warning(f"Validation issues: orphan_jobs={orphan_jobs}, orphan_companies={orphan_companies}")
-            else:
-                logger.info("Validation passed!")
-            
-            return validation_result
-            
-    finally:
-        # Cleanup local file
-        if os.path.exists(local_path):
-            os.remove(local_path)
+    with ETLMetricsLogger(PG_CONN_STRING).track('jobinsight_pipeline', 'transform_staging', dag_run_id) as metrics:
+        result = run_staging_pipeline()
+        metrics.rows_in = result.get('new_records', 0)
+        metrics.rows_out = result.get('total', 0)
+        metrics.rows_inserted = result.get('new_records', 0)
+        
+        logger.info(f"Staging result: {result}")
+        kwargs['ti'].xcom_push(key='staging_result', value=result)
+        return result
 
 
-def get_dwh_stats_task(**kwargs):
-    """Get DWH statistics for monitoring."""
-    from src.storage.minio import download_duckdb, get_duckdb_connection
-    import os
+def validate_staging_task(**kwargs):
+    """Validate staging data quality after ETL"""
+    from src.quality import (
+        StagingValidator, QualityGate, MetricsLogger, GateResult,
+        ValidationHardFailError
+    )
     
-    logger.info("Getting DWH statistics...")
+    ti = kwargs['ti']
+    staging_result = ti.xcom_pull(key='staging_result', task_ids='transform_staging') or {}
+    dag_run_id = kwargs.get('dag_run').run_id if kwargs.get('dag_run') else None
     
-    local_path = download_duckdb()
+    new_raw_count = staging_result.get('new_records', 0)
+    logger.info(f"Validating staging data (raw count: {new_raw_count})...")
+    
+    # StagingValidator creates its own config with stricter thresholds
+    validator = StagingValidator()
+    result = validator.validate(PG_CONN_STRING, new_raw_count)
     
     try:
-        with get_duckdb_connection(local_path) as conn:
-            # Today's stats (Pure Periodic Snapshot - no projected)
-            today_stats = conn.execute("""
-                SELECT 
-                    COUNT(DISTINCT job_sk) as unique_jobs,
-                    COUNT(*) as total_facts
-                FROM FactJobPostingDaily
-                WHERE date_id = CURRENT_DATE
-            """).fetchone()
-            
-            # Load month stats
-            load_month_stats = conn.execute("""
-                SELECT 
-                    load_month,
-                    COUNT(*) as fact_count,
-                    COUNT(DISTINCT job_sk) as unique_jobs,
-                    COUNT(DISTINCT date_id) as days_with_data
-                FROM FactJobPostingDaily
-                GROUP BY load_month
-                ORDER BY load_month DESC
-                LIMIT 3
-            """).fetchdf()
-            
-            stats = {
-                'today': {
-                    'unique_jobs': today_stats[0] if today_stats else 0,
-                    'total_facts': today_stats[1] if today_stats else 0,
-                },
-                'by_month': load_month_stats.to_dict('records') if not load_month_stats.empty else []
-            }
-            
-            logger.info(f"DWH Stats: {stats}")
-            return stats
-            
-    finally:
-        if os.path.exists(local_path):
-            os.remove(local_path)
+        gate_result = QualityGate(validator.config).evaluate(result)
+    except ValidationHardFailError as e:
+        MetricsLogger(PG_CONN_STRING).log(result, GateResult('failed', result.valid_rate, str(e)), dag_run_id)
+        raise
+    
+    MetricsLogger(PG_CONN_STRING).log(result, gate_result, dag_run_id)
+    return {'status': gate_result.status, 'total_jobs': result.total_jobs, 'valid_rate': result.valid_rate}
 
 
 with DAG(
-    'jobinsight_dwh',
+    'jobinsight_pipeline',
     default_args=default_args,
-    description='Daily Staging → DWH ETL pipeline (MinIO storage)',
-    schedule_interval='0 7 * * *',  # 7:00 AM daily (sau pipeline_dag)
+    description='Daily TopCV crawl → raw → staging pipeline',
+    schedule_interval='0 6 * * *',  # 6:00 AM daily
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=['production', 'dwh', 'etl', 'minio'],
+    tags=['production', 'crawler', 'etl'],
     max_active_runs=1,
 ) as dag:
     
     start = EmptyOperator(task_id='start')
     
-    # Wait for pipeline_dag to complete before running DWH ETL
-    # pipeline_dag runs at 6:00 AM (execution_date = previous day 23:00 UTC)
-    # dwh_dag runs at 7:00 AM (execution_date = current day 00:00 UTC)
-    # Delta = 1 hour to match execution dates
-    wait_for_pipeline = ExternalTaskSensor(
-        task_id='wait_for_pipeline',
-        external_dag_id='jobinsight_pipeline',
-        external_task_id='end',
-        execution_delta=timedelta(hours=1),  # dwh 7AM - pipeline 6AM = 1 hour
-        timeout=3600,              # Wait max 1 hour
-        poke_interval=60,          # Check every 1 minute
-        mode='reschedule',         # Free up worker while waiting
-        allowed_states=['success'],
-        failed_states=['failed', 'skipped'],
+    crawl = PythonOperator(
+        task_id='crawl',
+        python_callable=crawl_task,
+        op_kwargs={'num_pages': 10},
     )
     
-    run_etl = PythonOperator(
-        task_id='run_dwh_etl',
-        python_callable=run_dwh_etl_task,
-        op_kwargs={
-            'crawl_date': None,  # Default: today
-            'force_new': False,  # Incremental mode (giữ data cũ)
-        },
+    upload_minio = PythonOperator(
+        task_id='upload_minio',
+        python_callable=upload_minio_task,
     )
     
-    validate = PythonOperator(
-        task_id='validate_dwh',
-        python_callable=validate_dwh_task,
+    parse = PythonOperator(
+        task_id='parse',
+        python_callable=parse_task,
     )
     
-    get_stats = PythonOperator(
-        task_id='get_dwh_stats',
-        python_callable=get_dwh_stats_task,
+    validate_crawl = PythonOperator(
+        task_id='validate_crawl',
+        python_callable=validate_crawl_task,
+    )
+    
+    upsert_raw = PythonOperator(
+        task_id='upsert_raw',
+        python_callable=upsert_raw_task,
+    )
+    
+    transform_staging = PythonOperator(
+        task_id='transform_staging',
+        python_callable=transform_staging_task,
+    )
+    
+    validate_staging = PythonOperator(
+        task_id='validate_staging',
+        python_callable=validate_staging_task,
     )
     
     end = EmptyOperator(task_id='end')
     
-    # Flow: start → wait_for_pipeline → run_etl → validate → get_stats → end
-    start >> wait_for_pipeline >> run_etl >> validate >> get_stats >> end
+    # Flow: crawl → [upload_minio, parse] → validate_crawl → upsert_raw → staging → validate_staging → end
+    start >> crawl >> [upload_minio, parse]
+    parse >> validate_crawl >> upsert_raw >> transform_staging >> validate_staging >> end
+    upload_minio >> end

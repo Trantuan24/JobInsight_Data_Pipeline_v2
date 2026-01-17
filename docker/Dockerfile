@@ -1,3 +1,8 @@
+# ============================================
+# JobInsight Data Pipeline - Dockerfile
+# Optimized for Airflow with Playwright support
+# ============================================
+
 FROM apache/airflow:2.8.1-python3.10
 
 USER root
