@@ -5,16 +5,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from src.config.quality_config import (
+    DQ_MIN_JOBS_COUNT, DQ_MAX_DUPLICATE_RATE,
+    DQ_SUCCESS_THRESHOLD, DQ_WARNING_THRESHOLD,
+    DQ_STAGING_SUCCESS_THRESHOLD, DQ_STAGING_WARNING_THRESHOLD
+)
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ValidationConfig:
-    """Validation thresholds."""
-    min_job_count: int = 50
-    hard_fail_duplicate_rate: float = 0.20  # 20%
-    success_threshold: float = 0.90  # 90%
-    warning_threshold: float = 0.70  # 70%
+    """Validation thresholds (from env vars)."""
+    min_job_count: int = DQ_MIN_JOBS_COUNT
+    hard_fail_duplicate_rate: float = DQ_MAX_DUPLICATE_RATE
+    success_threshold: float = DQ_SUCCESS_THRESHOLD
+    warning_threshold: float = DQ_WARNING_THRESHOLD
 
 
 @dataclass
@@ -85,12 +91,12 @@ class StagingValidator:
     """Validator for staging data quality after ETL."""
     
     def __init__(self, config: ValidationConfig = None):
-        # Create new config with staging thresholds (don't mutate input)
+        # Create new config with staging thresholds (from env vars)
         self.config = ValidationConfig(
-            min_job_count=50,
-            hard_fail_duplicate_rate=config.hard_fail_duplicate_rate if config else 0.20,
-            success_threshold=0.95,  # Stricter for staging
-            warning_threshold=0.90
+            min_job_count=DQ_MIN_JOBS_COUNT,
+            hard_fail_duplicate_rate=config.hard_fail_duplicate_rate if config else DQ_MAX_DUPLICATE_RATE,
+            success_threshold=DQ_STAGING_SUCCESS_THRESHOLD,
+            warning_threshold=DQ_STAGING_WARNING_THRESHOLD
         )
     
     def validate(self, pg_conn_string: str, new_staging_count: int = 0) -> ValidationResult:

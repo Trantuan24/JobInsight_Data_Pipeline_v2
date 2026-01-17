@@ -3,8 +3,8 @@ JobInsight Maintenance DAG - Cleanup old files from MinIO
 Schedule: Daily at 3:00 AM Vietnam time
 
 Tasks:
-1. Cleanup HTML files > 15 days from jobinsight-raw
-2. Cleanup DWH backups > 7 days from jobinsight-backup
+1. Cleanup HTML files > RETENTION_HTML_DAYS from jobinsight-raw
+2. Cleanup DWH backups > RETENTION_BACKUP_DAYS from jobinsight-backup
 3. Log storage stats
 """
 from datetime import datetime, timedelta
@@ -19,9 +19,9 @@ sys.path.insert(0, '/opt/airflow')
 
 logger = logging.getLogger(__name__)
 
-# Retention policies (days)
-RAW_HTML_RETENTION = 15
-DWH_BACKUP_RETENTION = 7
+# Retention policies (from env vars)
+RAW_HTML_RETENTION = int(os.environ.get('RETENTION_HTML_DAYS', '15'))
+DWH_BACKUP_RETENTION = int(os.environ.get('RETENTION_BACKUP_DAYS', '7'))
 
 default_args = {
     'owner': 'airflow',
@@ -33,7 +33,7 @@ default_args = {
 
 
 def cleanup_raw_html_task(**kwargs):
-    """Cleanup HTML files older than 15 days from jobinsight-raw bucket."""
+    """Cleanup HTML files older than RETENTION_HTML_DAYS from jobinsight-raw bucket."""
     from minio import Minio
     from datetime import timezone
     
@@ -44,7 +44,7 @@ def cleanup_raw_html_task(**kwargs):
         secure=False
     )
     
-    bucket = 'jobinsight-raw'
+    bucket = os.environ.get('MINIO_BUCKET_RAW', 'jobinsight-raw')
     cutoff = datetime.now(timezone.utc) - timedelta(days=RAW_HTML_RETENTION)
     
     deleted = 0
@@ -67,7 +67,7 @@ def cleanup_raw_html_task(**kwargs):
 
 
 def cleanup_dwh_backups_task(**kwargs):
-    """Cleanup DWH backups older than 7 days from jobinsight-backup bucket."""
+    """Cleanup DWH backups older than RETENTION_BACKUP_DAYS from jobinsight-backup bucket."""
     from minio import Minio
     from datetime import timezone
     
@@ -78,7 +78,7 @@ def cleanup_dwh_backups_task(**kwargs):
         secure=False
     )
     
-    bucket = 'jobinsight-backup'
+    bucket = os.environ.get('MINIO_BUCKET_BACKUP', 'jobinsight-backup')
     cutoff = datetime.now(timezone.utc) - timedelta(days=DWH_BACKUP_RETENTION)
     
     deleted = 0
@@ -111,7 +111,12 @@ def get_storage_stats_task(**kwargs):
         secure=False
     )
     
-    buckets = ['jobinsight-raw', 'jobinsight-archive', 'jobinsight-backup', 'jobinsight-warehouse']
+    buckets = [
+        os.environ.get('MINIO_BUCKET_RAW', 'jobinsight-raw'),
+        os.environ.get('MINIO_BUCKET_ARCHIVE', 'jobinsight-archive'),
+        os.environ.get('MINIO_BUCKET_BACKUP', 'jobinsight-backup'),
+        os.environ.get('MINIO_BUCKET_WAREHOUSE', 'jobinsight-warehouse')
+    ]
     stats = {}
     
     for bucket in buckets:

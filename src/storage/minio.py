@@ -20,14 +20,15 @@ from minio import Minio
 from minio.error import S3Error
 
 from src.config import MINIO_CONFIG
+from src.config.storage_config import BUCKET_RAW, BUCKET_ARCHIVE, BUCKET_BACKUP, BUCKET_WAREHOUSE
 
 logger = logging.getLogger(__name__)
 
-# Buckets
-RAW_BUCKET = "jobinsight-raw"
-ARCHIVE_BUCKET = "jobinsight-archive"
-BACKUP_BUCKET = "jobinsight-backup"
-WAREHOUSE_BUCKET = "jobinsight-warehouse"
+# Buckets (from env vars)
+RAW_BUCKET = BUCKET_RAW
+ARCHIVE_BUCKET = BUCKET_ARCHIVE
+BACKUP_BUCKET = BUCKET_BACKUP
+WAREHOUSE_BUCKET = BUCKET_WAREHOUSE
 
 ALL_BUCKETS = [RAW_BUCKET, ARCHIVE_BUCKET, BACKUP_BUCKET, WAREHOUSE_BUCKET]
 
