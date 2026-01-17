@@ -27,6 +27,7 @@ from .minio import (
     upload_duckdb,
     backup_duckdb,
     export_parquet,
+    export_all_parquet,
     get_duckdb_connection,
 )
 from .archive import (
@@ -61,6 +62,7 @@ __all__ = [
     'upload_duckdb',
     'backup_duckdb',
     'export_parquet',
+    'export_all_parquet',
     'get_duckdb_connection',
     # Archive
     'get_old_records',

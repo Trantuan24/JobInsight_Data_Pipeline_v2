@@ -21,11 +21,12 @@ Retention Policies định nghĩa vòng đời dữ liệu: lưu trữ bao lâu,
 
 | Loại dữ liệu | Vị trí | Retention | Xử lý | Status |
 |--------------|--------|-----------|-------|--------|
-| HTML Backup | MinIO `jobinsight-raw` | 15 ngày | Manual cleanup | 🚧 TODO |
+| HTML Backup | MinIO `jobinsight-raw` | 15 ngày | Auto cleanup | ✅ Production |
 | Raw Jobs | PostgreSQL | 30 ngày | Archive → MinIO | ✅ Production |
 | Staging Jobs | PostgreSQL | Vĩnh viễn | Manual | 🚧 TODO |
 | Archive Parquet | MinIO `jobinsight-archive` | 12 tháng | Manual cleanup | 🚧 TODO |
-| Database Backup | MinIO `jobinsight-backup` | 7 ngày | Manual | 🚧 TODO |
+| PostgreSQL Backup | MinIO `jobinsight-backup` | 7 ngày | Auto backup + cleanup | ✅ Production |
+| DWH Backup | MinIO `jobinsight-backup` | 7 ngày | Auto backup + cleanup | ✅ Production |
 | Warehouse Parquet | MinIO `jobinsight-warehouse` | 12 tháng | DWH ETL | ✅ Production |
 | Airflow Logs | Container | 30 ngày | Auto-cleanup | ✅ Airflow native |
 
@@ -37,7 +38,7 @@ Retention Policies định nghĩa vòng đời dữ liệu: lưu trữ bao lâu,
 
 **Vị trí:** MinIO bucket `jobinsight-raw`
 
-**Retention:** 15 ngày
+**Retention:** 15 ngày (env: `RETENTION_HTML_DAYS`)
 
 **Lý do:**
 - HTML chỉ cần khi debug parsing issues
@@ -47,10 +48,10 @@ Retention Policies định nghĩa vòng đời dữ liệu: lưu trữ bao lâu,
 **Vòng đời:**
 ```
 Ngày 0-15: Active (có thể debug)
-Ngày 16+:  Nên xóa manual hoặc setup lifecycle policy
+Ngày 16+:  Auto cleanup bởi maintenance_dag.py
 ```
 
-**Status:** 🚧 **TODO** - Cần implement cleanup automation
+**Status:** ✅ **Production** - `maintenance_dag.py` task `cleanup_raw_html`
 
 **Recovery:** Không thể khôi phục sau khi xóa. Có thể crawl lại nếu cần.
 
@@ -120,9 +121,9 @@ jobinsight-archive/
 
 **Vị trí:** MinIO bucket `jobinsight-backup`
 
-**Retention:** 7 ngày (planned)
+**Retention:** 7 ngày (env: `RETENTION_BACKUP_DAYS`)
 
-**Status:** 🚧 **TODO** - Chưa có backup automation
+**Status:** ✅ **Production** - `maintenance_dag.py` task `backup_postgres`
 
 **Lý do:**
 - Daily backup cho disaster recovery
@@ -132,12 +133,29 @@ jobinsight-archive/
 **Cấu trúc:**
 ```
 jobinsight-backup/
-├── jobinsight_20250106.dump.gz
-├── jobinsight_20250105.dump.gz
-└── ... (7 files gần nhất)
+├── pg_backups/
+│   ├── jobinsight_20260118_030000.dump
+│   ├── jobinsight_20260117_030000.dump
+│   └── ... (7 files gần nhất)
+└── dwh_backups/
+    ├── jobinsight_20260118_070000.duckdb
+    └── ... (7 files gần nhất)
 ```
 
+**Automation:**
+- `backup_postgres_task()` - Chạy `pg_dump` và upload lên MinIO
+- `cleanup_pg_backups_task()` - Xóa backups cũ hơn `RETENTION_BACKUP_DAYS`
+- `cleanup_dwh_backups_task()` - Xóa DuckDB backups cũ
+
 **Recovery:** Restore bằng `pg_restore`
+
+```bash
+# Download backup từ MinIO
+docker exec jobinsight_minio mc cp /data/jobinsight-backup/pg_backups/jobinsight_20260118_030000.dump /tmp/
+
+# Restore
+pg_restore -h postgres -U jobinsight -d jobinsight /tmp/jobinsight_20260118_030000.dump
+```
 
 ---
 
@@ -217,16 +235,25 @@ Check old data → Export Parquet → Upload MinIO → Verify → Delete from DB
 - Chỉ xóa PostgreSQL sau khi verify archive thành công
 - Nếu verify fail → giữ nguyên data, alert
 
-### Maintenance DAG (Planned)
+### Maintenance DAG
 
-**File:** `dags/maintenance_dag.py` 🚧 **CHƯA TỒN TẠI**
+**File:** `dags/maintenance_dag.py`
 
-**Tasks cần implement:**
-- Cleanup HTML backups (>15 ngày)
-- Cleanup old Parquet partitions (>12 tháng)
-- Database backup daily
-- Storage usage report
-- Lifecycle policy enforcement
+**Schedule:** Daily 3:00 AM
+
+**Tasks:**
+| Task | Mô tả | Status |
+|------|-------|--------|
+| `backup_postgres` | pg_dump → MinIO | ✅ Production |
+| `cleanup_raw_html` | Xóa HTML > 15 ngày | ✅ Production |
+| `cleanup_dwh_backups` | Xóa DuckDB backups > 7 ngày | ✅ Production |
+| `cleanup_pg_backups` | Xóa PostgreSQL backups > 7 ngày | ✅ Production |
+| `get_storage_stats` | Log storage usage | ✅ Production |
+
+**Flow:**
+```
+start → backup_postgres → [cleanup_html, cleanup_dwh_backups, cleanup_pg_backups] → storage_stats → end
+```
 
 ---
 
@@ -307,28 +334,15 @@ mc mirror minio/jobinsight-archive /external/backup/
 
 | Thời gian | Task | Status |
 |-----------|------|--------|
+| 03:00 | Maintenance DAG (backup + cleanup) | ✅ Production |
 | 06:00 | Pipeline DAG (crawl → staging) | ✅ Production |
 | 07:00 | DWH DAG (staging → DWH) | ✅ Production |
-
-### Daily (Planned)
-
-| Thời gian | Task | Status |
-|-----------|------|--------|
-| 02:00 | Database backup | 🚧 TODO |
-| 03:00 | Cleanup HTML cũ | 🚧 TODO |
 
 ### Weekly (Hiện tại)
 
 | Ngày | Thời gian | Task | Status |
 |------|-----------|------|--------|
 | Sunday | 02:00 | Archive old data (raw_jobs) | ✅ Production |
-
-### Weekly (Planned)
-
-| Ngày | Thời gian | Task | Status |
-|------|-----------|------|--------|
-| Sunday | 03:00 | Cleanup old archives | 🚧 TODO |
-| Sunday | 04:00 | Cleanup old backups | 🚧 TODO |
 
 ### Monthly (Planned)
 
@@ -347,14 +361,16 @@ mc mirror minio/jobinsight-archive /external/backup/
 - [x] Archive DAG (PostgreSQL → MinIO)
 - [x] Archive functions (`src/storage/archive.py`)
 - [x] MinIO buckets setup
+- [x] HTML cleanup automation (`maintenance_dag.py`)
+- [x] PostgreSQL backup automation (`maintenance_dag.py`)
+- [x] DWH backup automation (`maintenance_dag.py`)
+- [x] Storage stats logging (`maintenance_dag.py`)
 
 ### Cần làm
 
-- [ ] HTML cleanup automation
-- [ ] Database backup automation
-- [ ] MinIO lifecycle policies
+- [ ] MinIO lifecycle policies (native)
 - [ ] External backup script
-- [ ] Storage alerting
+- [ ] Storage alerting (Telegram/Discord)
 - [ ] Retention audit log
 
 ---
@@ -362,6 +378,7 @@ mc mirror minio/jobinsight-archive /external/backup/
 ## References
 
 - Archive DAG: `dags/archive_dag.py`
+- Maintenance DAG: `dags/maintenance_dag.py`
 - Archive functions: `src/storage/archive.py`
 - DWH ETL pipeline: `src/etl/warehouse/pipeline.py`
 - DWH schema: `sql/schemas/dwh_schema.sql`

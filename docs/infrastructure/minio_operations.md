@@ -229,7 +229,21 @@ docker-compose start minio
 
 ## 5. Cleanup Operations
 
-### Delete old HTML files
+### Automated Cleanup (Maintenance DAG)
+
+`maintenance_dag.py` chạy daily 3:00 AM, tự động:
+- Backup PostgreSQL
+- Cleanup HTML files > 15 ngày
+- Cleanup DWH backups > 7 ngày
+- Cleanup PostgreSQL backups > 7 ngày
+
+**Manual trigger:**
+```bash
+docker exec jobinsight-airflow-webserver-1 \
+  airflow dags trigger jobinsight_maintenance
+```
+
+### Manual Delete old HTML files
 
 ```bash
 # List files older than 15 days
@@ -340,6 +354,7 @@ print(client.bucket_exists("jobinsight-raw"))  # Should be True
 ### Daily
 
 - [ ] Check MinIO health: `curl http://localhost:9000/minio/health/live`
+- [ ] Verify maintenance DAG chạy thành công (backup + cleanup)
 - [ ] Verify pipeline DAG chạy thành công (check Airflow UI)
 
 ### Weekly
@@ -388,17 +403,29 @@ open http://localhost:9001
 
 | DAG | Schedule | Mô tả |
 |-----|----------|-------|
+| `jobinsight_maintenance` | Daily 3:00 AM | Backup PostgreSQL + Cleanup old files |
 | `jobinsight_pipeline` | Daily 6:00 AM | Upload HTML to MinIO |
-| `jobinsight_archive` | Weekly Sunday 2:00 AM | Archive old data to MinIO |
 | `jobinsight_dwh` | Daily 7:00 AM | ETL Staging → DWH (DuckDB + Parquet) |
+| `jobinsight_archive` | Weekly Sunday 2:00 AM | Archive old data to MinIO |
+
+### Maintenance DAG Tasks
+
+| Task | Mô tả |
+|------|-------|
+| `backup_postgres` | pg_dump → MinIO (`pg_backups/`) |
+| `cleanup_raw_html` | Xóa HTML > `RETENTION_HTML_DAYS` |
+| `cleanup_dwh_backups` | Xóa DuckDB backups > `RETENTION_BACKUP_DAYS` |
+| `cleanup_pg_backups` | Xóa PostgreSQL backups > `RETENTION_BACKUP_DAYS` |
+| `get_storage_stats` | Log storage usage cho monitoring |
 
 ---
 
 ## References
 
 - Setup guide: `docs/infrastructure/minio_setup_guide.md`
+- Retention policies: `docs/governance/retention_policies.md`
 - Source code: `src/storage/minio.py`, `src/storage/minio_storage.py`, `src/storage/archive.py`
 - DWH ETL pipeline: `src/etl/warehouse/pipeline.py`
 - DWH schema: `sql/schemas/dwh_schema.sql`
-- DuckDB operations: `src/storage/minio.py` (download_duckdb, upload_duckdb, backup_duckdb)
+- Maintenance DAG: `dags/maintenance_dag.py`
 - Config: `src/config/storage_config.py`, `.env`

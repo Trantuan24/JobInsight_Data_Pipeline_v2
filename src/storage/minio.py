@@ -250,6 +250,68 @@ def export_parquet(conn: duckdb.DuckDBPyConnection, load_month: str) -> bool:
         return False
 
 
+def export_all_parquet(conn: duckdb.DuckDBPyConnection, load_month: str) -> Dict[str, int]:
+    """
+    Export all DWH tables to Parquet and upload to MinIO.
+    
+    Tables exported:
+    - DimJob, DimCompany, DimLocation, DimDate (dimensions)
+    - FactJobPostingDaily, FactJobLocationBridge (facts)
+    """
+    stats = {}
+    
+    try:
+        client = get_minio_client()
+        if not client.bucket_exists(WAREHOUSE_BUCKET):
+            client.make_bucket(WAREHOUSE_BUCKET)
+        
+        tables = [
+            'DimJob',
+            'DimCompany', 
+            'DimLocation',
+            'DimDate',
+            'FactJobPostingDaily',
+            'FactJobLocationBridge'
+        ]
+        
+        for table in tables:
+            try:
+                # For facts, filter by load_month; for dims, export all current
+                if table.startswith('Fact'):
+                    df = conn.execute(f"""
+                        SELECT * FROM {table} WHERE load_month = '{load_month}'
+                    """).fetchdf()
+                elif table.startswith('Dim') and table != 'DimDate':
+                    # Export only current records for SCD2 dimensions
+                    df = conn.execute(f"""
+                        SELECT * FROM {table} WHERE is_current = TRUE
+                    """).fetchdf()
+                else:
+                    df = conn.execute(f"SELECT * FROM {table}").fetchdf()
+                
+                if not df.empty:
+                    with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as tmp:
+                        df.to_parquet(tmp.name, index=False)
+                        object_name = f'{PARQUET_PREFIX}/load_month={load_month}/{table}.parquet'
+                        client.fput_object(WAREHOUSE_BUCKET, object_name, tmp.name)
+                        os.unlink(tmp.name)
+                        stats[table] = len(df)
+                        logger.info(f"Exported {table}: {len(df)} rows")
+                else:
+                    stats[table] = 0
+                    
+            except Exception as e:
+                logger.warning(f"Failed to export {table}: {e}")
+                stats[table] = -1
+        
+        logger.info(f"Export all Parquet completed: {stats}")
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Export all Parquet error: {e}")
+        return stats
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     init_minio_buckets()

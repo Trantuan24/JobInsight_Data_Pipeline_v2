@@ -16,6 +16,7 @@ from src.storage.minio import (
     upload_duckdb,
     backup_duckdb,
     export_parquet,
+    export_all_parquet,
     get_duckdb_connection
 )
 from .cache import init_dimension_caches
@@ -173,9 +174,9 @@ def run_etl(
             # 9. Cleanup duplicates
             result['stats']['cleanup'] = cleanup_duplicate_facts(conn)
             
-            # 10. Export to Parquet
+            # 10. Export all tables to Parquet
             load_month = datetime.now().strftime('%Y-%m')
-            export_parquet(conn, load_month)
+            result['stats']['parquet_export'] = export_all_parquet(conn, load_month)
             result['load_month'] = load_month
         
         # 11. Upload DuckDB back to MinIO

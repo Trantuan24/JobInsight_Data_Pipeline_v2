@@ -150,13 +150,14 @@ def get_minio_client() -> Minio:
 |----------|-------|
 | `download_duckdb(force_new)` | Download DuckDB từ MinIO hoặc tạo mới |
 | `upload_duckdb(local_path)` | Upload DuckDB lên MinIO |
-| `backup_duckdb(local_path)` | Backup DuckDB trước khi ETL |
-| `export_parquet(conn, load_month)` | Export tables ra Parquet partitions |
+| `backup_duckdb(local_path)` | Backup DuckDB trước khi ETL (giữ `RETENTION_BACKUP_DAYS` bản) |
+| `export_parquet(conn, load_month)` | Export facts với join ra Parquet |
+| `export_all_parquet(conn, load_month)` | Export tất cả tables ra Parquet (dims + facts) |
 | `get_duckdb_connection(db_path)` | Context manager cho DuckDB connection |
 
 **Example:**
 ```python
-from src.storage.minio import download_duckdb, upload_duckdb, get_duckdb_connection
+from src.storage.minio import download_duckdb, upload_duckdb, get_duckdb_connection, export_all_parquet
 
 # Download from MinIO
 db_path = download_duckdb()
@@ -165,6 +166,10 @@ db_path = download_duckdb()
 with get_duckdb_connection(db_path) as conn:
     result = conn.execute("SELECT COUNT(*) FROM FactJobPostingDaily").fetchone()
     print(f"Facts: {result[0]}")
+    
+    # Export all tables to Parquet
+    stats = export_all_parquet(conn, '2026-01')
+    print(f"Exported: {stats}")
 
 # Upload back
 upload_duckdb(db_path)
@@ -199,11 +204,19 @@ year={YYYY}/month={MM}/raw_jobs_{timestamp}.parquet
 
 ### DWH Database (jobinsight-warehouse)
 ```
-dwh.duckdb                                    # Latest DuckDB database
-backups/dwh_backup_{timestamp}.duckdb        # Backups before ETL
-parquet/load_month=2025-01/DimJob.parquet    # Dimension tables
-parquet/load_month=2025-01/FactJobPostingDaily.parquet
-# Ví dụ: parquet/load_month=2025-01/DimJob.parquet
+dwh/jobinsight.duckdb                         # Latest DuckDB database
+parquet/load_month=2026-01/DimJob.parquet     # Dimension: Jobs
+parquet/load_month=2026-01/DimCompany.parquet # Dimension: Companies
+parquet/load_month=2026-01/DimLocation.parquet # Dimension: Locations
+parquet/load_month=2026-01/DimDate.parquet    # Dimension: Dates
+parquet/load_month=2026-01/FactJobPostingDaily.parquet # Fact table
+parquet/load_month=2026-01/FactJobLocationBridge.parquet # Bridge table
+```
+
+### Backups (jobinsight-backup)
+```
+pg_backups/jobinsight_20260118_030000.dump    # PostgreSQL backup
+dwh_backups/jobinsight_20260118_070000.duckdb # DuckDB backup
 ```
 
 ---
@@ -238,12 +251,23 @@ from src.storage import (
 
 ## 8. Retention Policies
 
-Hiện tại chưa có lifecycle policies tự động. Retention được xử lý bởi:
+Retention được xử lý tự động bởi `maintenance_dag.py` (chạy daily 3:00 AM):
 
-1. **Archive DAG** - Chạy weekly, archive records > 30 ngày
-2. **Maintenance DAG** - Cleanup manual nếu cần
+| Task | Mô tả | Retention |
+|------|-------|-----------|
+| `backup_postgres` | pg_dump → MinIO | - |
+| `cleanup_raw_html` | Xóa HTML cũ | 15 ngày (`RETENTION_HTML_DAYS`) |
+| `cleanup_dwh_backups` | Xóa DuckDB backups cũ | 7 ngày (`RETENTION_BACKUP_DAYS`) |
+| `cleanup_pg_backups` | Xóa PostgreSQL backups cũ | 7 ngày (`RETENTION_BACKUP_DAYS`) |
+| `get_storage_stats` | Log storage usage | - |
 
-**Để thêm lifecycle policy (tương lai):**
+**Env vars:**
+```bash
+RETENTION_HTML_DAYS=15
+RETENTION_BACKUP_DAYS=7
+```
+
+**Để thêm lifecycle policy native (optional):**
 
 ```bash
 # Sử dụng mc (MinIO Client)
