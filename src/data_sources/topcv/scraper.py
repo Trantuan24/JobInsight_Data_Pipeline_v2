@@ -12,7 +12,7 @@ from playwright.async_api import async_playwright
 
 from src.config.crawler_config import (
     BASE_URL, BACKUP_DIR, PAGE_TIMEOUT, SELECTOR_TIMEOUT,
-    MIN_DELAY, MAX_DELAY, CONCURRENT_PAGES,
+    MIN_DELAY, MAX_DELAY, CONCURRENT_PAGES, HEADLESS,
     DESKTOP_AGENTS, VIEWPORTS, MOBILE_AGENTS, MOBILE_VIEWPORTS,
     ANTI_DETECTION_SCRIPT, BLOCK_PATTERNS
 )
@@ -133,7 +133,7 @@ async def scrape_page_impl(page_num: int, user_agent: str, viewport: dict) -> Di
         browser = None
         try:
             browser = await p.chromium.launch(
-                headless=True,
+                headless=HEADLESS,
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',

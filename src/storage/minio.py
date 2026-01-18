@@ -255,8 +255,10 @@ def export_all_parquet(conn: duckdb.DuckDBPyConnection, load_month: str) -> Dict
     Export all DWH tables to Parquet and upload to MinIO.
     
     Tables exported:
-    - DimJob, DimCompany, DimLocation, DimDate (dimensions)
-    - FactJobPostingDaily, FactJobLocationBridge (facts)
+    - DimJob, DimCompany (SCD2 - only current records)
+    - DimLocation, DimDate (no SCD2 - all records)
+    - FactJobPostingDaily (filter by load_month)
+    - FactJobLocationBridge (join with facts by load_month)
     """
     stats = {}
     
@@ -265,29 +267,23 @@ def export_all_parquet(conn: duckdb.DuckDBPyConnection, load_month: str) -> Dict
         if not client.bucket_exists(WAREHOUSE_BUCKET):
             client.make_bucket(WAREHOUSE_BUCKET)
         
-        tables = [
-            'DimJob',
-            'DimCompany', 
-            'DimLocation',
-            'DimDate',
-            'FactJobPostingDaily',
-            'FactJobLocationBridge'
-        ]
+        # Define export queries for each table
+        table_queries = {
+            'DimJob': "SELECT * FROM DimJob WHERE is_current = TRUE",
+            'DimCompany': "SELECT * FROM DimCompany WHERE is_current = TRUE",
+            'DimLocation': "SELECT * FROM DimLocation",  # No SCD2
+            'DimDate': "SELECT * FROM DimDate",  # No SCD2
+            'FactJobPostingDaily': f"SELECT * FROM FactJobPostingDaily WHERE load_month = '{load_month}'",
+            'FactJobLocationBridge': f"""
+                SELECT b.* FROM FactJobLocationBridge b
+                JOIN FactJobPostingDaily f ON b.fact_id = f.fact_id
+                WHERE f.load_month = '{load_month}'
+            """
+        }
         
-        for table in tables:
+        for table, query in table_queries.items():
             try:
-                # For facts, filter by load_month; for dims, export all current
-                if table.startswith('Fact'):
-                    df = conn.execute(f"""
-                        SELECT * FROM {table} WHERE load_month = '{load_month}'
-                    """).fetchdf()
-                elif table.startswith('Dim') and table != 'DimDate':
-                    # Export only current records for SCD2 dimensions
-                    df = conn.execute(f"""
-                        SELECT * FROM {table} WHERE is_current = TRUE
-                    """).fetchdf()
-                else:
-                    df = conn.execute(f"SELECT * FROM {table}").fetchdf()
+                df = conn.execute(query).fetchdf()
                 
                 if not df.empty:
                     with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as tmp:

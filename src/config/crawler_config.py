@@ -13,8 +13,9 @@ NUM_PAGES = int(os.getenv("CRAWLER_NUM_PAGES", "5"))
 CONCURRENT_PAGES = int(os.getenv("CRAWLER_CONCURRENT_PAGES", "2"))
 PAGE_TIMEOUT = 60000
 SELECTOR_TIMEOUT = 20000
-MIN_DELAY = 3
-MAX_DELAY = 6
+MIN_DELAY = int(os.getenv("CRAWLER_DELAY_MIN", "3"))
+MAX_DELAY = int(os.getenv("CRAWLER_DELAY_MAX", "6"))
+HEADLESS = os.getenv("CRAWLER_HEADLESS", "true").lower() == "true"
 
 # Desktop User Agents
 DESKTOP_AGENTS = [
