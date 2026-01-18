@@ -180,9 +180,65 @@ services:
   #     - minio
   #   restart: always
 
+  # ============================================
+  # Grafana - Pipeline Monitoring Dashboard
+  # ============================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: jobinsight_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    networks:
+      - jobinsight_network
+
+  # ============================================
+  # Apache Superset - Business Intelligence
+  # ============================================
+  superset:
+    image: apache/superset:3.0.0
+    container_name: jobinsight_superset
+    ports:
+      - "8088:8088"
+    environment:
+      - SUPERSET_SECRET_KEY=jobinsight_superset_secret_key_12345
+      - SUPERSET_CONFIG_PATH=/app/superset_config.py
+    volumes:
+      - superset-data:/app/superset_home
+      - ./docker/superset/superset_config.py:/app/superset_config.py
+      - ./docker/superset/superset-init.sh:/app/superset-init.sh
+      - ./data:/app/data
+    command: >
+      bash -c "
+        pip install duckdb duckdb-engine &&
+        chmod +x /app/superset-init.sh &&
+        /app/superset-init.sh &&
+        superset run -h 0.0.0.0 -p 8088 --with-threads --reload
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    networks:
+      - jobinsight_network
+
 volumes:
   postgres-db-volume:
   minio-data:
+  grafana-data:
+  superset-data:
 
 networks:
   jobinsight_network:
