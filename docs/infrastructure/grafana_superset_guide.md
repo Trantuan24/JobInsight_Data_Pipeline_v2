@@ -1,35 +1,28 @@
-# Grafana + Superset Setup Guide
+# Visualization Tools Guide
 
 ## Overview
 
 | Tool | Port | Purpose | Data Source |
 |------|------|---------|-------------|
-| Grafana | 3000 | Pipeline Monitoring | PostgreSQL (monitoring schema) |
+| Grafana | 3000 | Pipeline Monitoring | PostgreSQL (monitoring) |
 | Superset | 8088 | Business Intelligence | DuckDB (DWH) |
 
-## Grafana - Pipeline Monitoring
+## Grafana
 
 ### Access
 - URL: http://localhost:3000
 - Login: `admin` / `admin`
 
-### Pre-built Dashboards (Auto-provisioned)
+### Pre-built Dashboards
 
-**Pipeline Health** (`/d/jobinsight-pipeline`)
-- Success rate gauge, total runs, avg duration
-- Task duration over time, success/failure by task
-- Recent pipeline runs table
+**Pipeline Health** - Success rate, duration, task status
 
-**Data Quality** (`/d/jobinsight-quality`)
-- Valid rate gauge, duplicate rate
-- Quality trend by validation type
-- Quality gate status distribution
+**Data Quality** - Valid rate, duplicate rate, quality gates
 
 ### Datasource
-- Auto-configured: `PostgreSQL-Monitoring`
-- Database: `jobinsight`, Schema: `monitoring`
+Auto-configured: `PostgreSQL-Monitoring` → `jobinsight.monitoring`
 
-## Superset - Business Intelligence
+## Superset
 
 ### Access
 - URL: http://localhost:8088
@@ -38,66 +31,25 @@
 ### Setup DuckDB Connection (First-time)
 
 1. **Settings** → **Database Connections** → **+ Database**
-2. Click **"Connect this database with a SQLAlchemy URI string instead"**
+2. Click **"Connect with SQLAlchemy URI"**
 3. Enter:
-   - SQLALCHEMY URI: `duckdb:////app/data/jobinsight.duckdb`
-   - DISPLAY NAME: `JobInsight DWH`
-4. Click **TEST CONNECTION** → **CONNECT**
+   - URI: `duckdb:////app/data/jobinsight.duckdb`
+   - Name: `JobInsight DWH`
+4. **TEST CONNECTION** → **CONNECT**
 
 ### Create Datasets
 
-**Data** → **Datasets** → **+ Dataset**
+**Data** → **Datasets** → **+ Dataset** → Schema: `main`
 
-| Dataset | Schema | Table |
-|---------|--------|-------|
-| Facts | main | FactJobPostingDaily |
-| Jobs | main | DimJob |
-| Companies | main | DimCompany |
-| Locations | main | DimLocation |
+Tables: `FactJobPostingDaily`, `DimJob`, `DimCompany`, `DimLocation`
 
 ### Suggested Charts
 
-| Chart | Type | Dataset | Config |
-|-------|------|---------|--------|
-| Daily Job Trends | Line | FactJobPostingDaily | X: date_id, Metric: COUNT(*) |
-| Top 10 Companies | Bar | DimCompany | X: company_name, Metric: COUNT(*), Limit: 10 |
-| Jobs by Location | Pie | DimLocation | Dimension: city, Metric: COUNT(*) |
-| Total Jobs | Big Number | FactJobPostingDaily | Metric: COUNT(*) |
-
-## Troubleshooting
-
-**Grafana "No data"**
-```sql
--- Check monitoring data
-SELECT COUNT(*) FROM monitoring.etl_metrics;
-```
-
-**Superset DuckDB "Read-only" error**
-- Ensure volume mount is NOT read-only in docker-compose.yml
-- Correct: `./data:/app/data`
-- Wrong: `./data:/app/data:ro`
-
-**Restart services**
-```bash
-docker compose restart grafana superset
-```
-
-## Config Files
-
-```
-docker/
-├── grafana/provisioning/
-│   ├── dashboards/
-│   │   ├── dashboards.yml
-│   │   └── json/
-│   │       ├── pipeline-health.json
-│   │       └── data-quality.json
-│   └── datasources/
-│       └── datasources.yml
-└── superset/
-    ├── superset_config.py
-    └── superset-init.sh
-```
+| Chart | Type | Config |
+|-------|------|--------|
+| Daily Job Trends | Line | X: date_id, Metric: COUNT(*) |
+| Top Companies | Bar | X: company_name, Limit: 10 |
+| Jobs by Location | Pie | Dimension: city |
 
 ## Quick Commands
 
@@ -105,10 +57,30 @@ docker/
 # Start
 docker compose up -d grafana superset
 
+# Restart
+docker compose restart grafana superset
+
 # Logs
 docker logs jobinsight_grafana
 docker logs jobinsight_superset
+```
 
-# Status
-docker compose ps
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Grafana "No data" | Check `monitoring.etl_metrics` has data |
+| Superset "Read-only" | Ensure volume mount is NOT `:ro` |
+| Connection failed | Verify containers on same network |
+
+## Config Files
+
+```
+docker/
+├── grafana/provisioning/
+│   ├── dashboards/*.json
+│   └── datasources/datasources.yml
+└── superset/
+    ├── superset_config.py
+    └── superset-init.sh
 ```

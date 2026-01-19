@@ -23,8 +23,8 @@ Retention Policies định nghĩa vòng đời dữ liệu: lưu trữ bao lâu,
 |--------------|--------|-----------|-------|--------|
 | HTML Backup | MinIO `jobinsight-raw` | 15 ngày | Auto cleanup | ✅ Production |
 | Raw Jobs | PostgreSQL | 30 ngày | Archive → MinIO | ✅ Production |
-| Staging Jobs | PostgreSQL | Vĩnh viễn | Manual | 🚧 TODO |
-| Archive Parquet | MinIO `jobinsight-archive` | 12 tháng | Manual cleanup | 🚧 TODO |
+| Staging Jobs | PostgreSQL | Vĩnh viễn | Không cần archive | ✅ By Design |
+| Archive Parquet | MinIO `jobinsight-archive` | Vĩnh viễn | Manual cleanup yearly | ✅ Low priority |
 | PostgreSQL Backup | MinIO `jobinsight-backup` | 7 ngày | Auto backup + cleanup | ✅ Production |
 | DWH Backup | MinIO `jobinsight-backup` | 7 ngày | Auto backup + cleanup | ✅ Production |
 | Warehouse Parquet | MinIO `jobinsight-warehouse` | 12 tháng | DWH ETL | ✅ Production |
@@ -86,11 +86,15 @@ Năm 2+:     COLD - Xóa archive (tùy nhu cầu)
 
 **Vị trí:** PostgreSQL `jobinsight_staging.staging_jobs`
 
-**Retention:** Vĩnh viễn (hiện tại)
+**Retention:** Vĩnh viễn
 
-**Status:** 🚧 **TODO** - Chưa có archive automation
+**Status:** ✅ **By Design** - Không cần archive
 
-**Xử lý planned:** Mở rộng `archive_dag.py` để archive staging tương tự raw
+**Lý do:**
+- Staging là intermediate layer (raw → staging → DWH)
+- DWH đã lưu full history với SCD Type 2
+- Nếu cần historical data → query từ DWH hoặc raw archive
+- Staging data nhỏ (~3MB/ngày), không ảnh hưởng performance
 
 ---
 
@@ -98,9 +102,9 @@ Năm 2+:     COLD - Xóa archive (tùy nhu cầu)
 
 **Vị trí:** MinIO bucket `jobinsight-archive`
 
-**Retention:** 12 tháng (planned)
+**Retention:** Vĩnh viễn (manual cleanup yearly nếu cần)
 
-**Status:** 🚧 **TODO** - Chưa có lifecycle cleanup automation
+**Status:** ✅ **Low Priority** - Parquet nén tốt, không tốn storage
 
 **Cấu trúc:**
 ```
@@ -110,10 +114,11 @@ jobinsight-archive/
         └── raw_jobs_20250102_143022.parquet
 ```
 
-**Lý do:**
-- Parquet nén tốt, không tốn nhiều storage
-- 12 tháng đủ cho phân tích historical
-- Có thể restore về PostgreSQL khi cần
+**Lý do không cần auto-cleanup:**
+- Parquet nén rất tốt (~90% compression)
+- 12 tháng data chỉ ~5-10 GB
+- Archive hiếm khi cần access
+- Manual cleanup yearly đủ rồi
 
 ---
 
@@ -344,13 +349,14 @@ mc mirror minio/jobinsight-archive /external/backup/
 |------|-----------|------|--------|
 | Sunday | 02:00 | Archive old data (raw_jobs) | ✅ Production |
 
-### Monthly (Planned)
+### Monthly (Optional)
 
 | Ngày | Task | Status |
 |------|------|--------|
-| 1st | Cleanup old Parquet partitions | 🚧 TODO |
-| 1st | Storage usage report | 🚧 TODO |
-| 1st | Capacity planning review | 🚧 TODO |
+| Yearly | Cleanup old archive Parquet (nếu cần) | ✅ Manual |
+| Yearly | Storage capacity review | ✅ Manual |
+
+> **Note:** Monthly tasks không cần automation vì daily maintenance đã đủ. Storage stats được log daily.
 
 ---
 
@@ -358,7 +364,7 @@ mc mirror minio/jobinsight-archive /external/backup/
 
 ### Đã hoàn thành
 
-- [x] Archive DAG (PostgreSQL → MinIO)
+- [x] Archive DAG (PostgreSQL raw_jobs → MinIO)
 - [x] Archive functions (`src/storage/archive.py`)
 - [x] MinIO buckets setup
 - [x] HTML cleanup automation (`maintenance_dag.py`)
@@ -366,12 +372,11 @@ mc mirror minio/jobinsight-archive /external/backup/
 - [x] DWH backup automation (`maintenance_dag.py`)
 - [x] Storage stats logging (`maintenance_dag.py`)
 
-### Cần làm
+### Optional (Low Priority)
 
-- [ ] MinIO lifecycle policies (native)
-- [ ] External backup script
-- [ ] Storage alerting (Telegram/Discord)
-- [ ] Retention audit log
+- [ ] MinIO lifecycle policies (native) - Không cần, đã có maintenance DAG
+- [ ] External backup script - Nice-to-have cho disaster recovery
+- [ ] Storage alerting (Telegram/Discord) - Nice-to-have
 
 ---
 
@@ -383,5 +388,4 @@ mc mirror minio/jobinsight-archive /external/backup/
 - DWH ETL pipeline: `src/etl/warehouse/pipeline.py`
 - DWH schema: `sql/schemas/dwh_schema.sql`
 - DuckDB operations: `src/storage/minio.py`
-- MinIO setup: `docs/infrastructure/minio_setup_guide.md`
-- MinIO operations: `docs/infrastructure/minio_operations.md`
+- MinIO guide: `docs/infrastructure/minio_guide.md`
