@@ -17,12 +17,12 @@
 
 ## 📑 Table of Contents
 
-- 🏛️ [Architecture](#-architecture)
+- 🏛️ [Architecture](#️-architecture)
 - ⚡ [Key Features](#-key-features)
+- 🛠️ [Tech Stack](#️-tech-stack)
 - 🚀 [Quick Start](#-quick-start)
 - 🌟 [Star Schema](#-star-schema)
 - 📚 [Documentation](#-documentation)
-- 🛠️ [Tech Stack](#-tech-stack)
 - 💡 [Lessons Learned](#-lessons-learned)
 
 ---
