@@ -7,18 +7,23 @@
 
 > **End-to-end Data Pipeline** crawling IT jobs from TopCV.vn → **Star Schema DWH** → Analytics dashboards
 
-**Highlights**: Production-grade web scraping • Kimball dimensional modeling • Multi-layer quality validation • Modern data stack (Airflow, DuckDB, MinIO)
+**Highlights**:
+- 🕷️ Production-grade web scraping with anti-detection
+- 🏛️ Kimball dimensional modeling (SCD Type 2, Periodic Snapshot)
+- 🛡️ Multi-layer quality validation & automated monitoring
+- 📊 Modern data stack (Airflow, PostgreSQL, DuckDB, MinIO)
 
 ---
 
 ## 📑 Table of Contents
 
-- [Architecture](#-architecture)
-- [Key Features](#-key-features)
-- [Quick Start](#-quick-start)
-- [Star Schema](#-star-schema)
-- [Documentation](#-documentation)
-- [Tech Stack](#-tech-stack)
+- 🏛️ [Architecture](#-architecture)
+- ⚡ [Key Features](#-key-features)
+- 🚀 [Quick Start](#-quick-start)
+- 🌟 [Star Schema](#-star-schema)
+- 📚 [Documentation](#-documentation)
+- 🛠️ [Tech Stack](#-tech-stack)
+- 💡 [Lessons Learned](#-lessons-learned)
 
 ---
 
@@ -58,7 +63,7 @@
 - Quality gates with hard fail (≥90% valid rate)
 - Automated monitoring & alerts
 
-> � **Details**: [ARCHITECTURE.md](docs/ARCHITECTURE.md) | [Data Quality Rules](docs/governance/data_quality_rules.md)
+> � **Details**: [ARCHITECTURE](docs/ARCHITECTURE.md) | [Data Quality Rules](docs/governance/data_quality_rules.md)
 
 ---
 
@@ -85,48 +90,54 @@
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose (v4.22+)
-- 8GB+ RAM recommended
-- Port availability: 8080, 8088, 3000, 9000, 9001, 5434
+- **Docker** & **Docker Compose** (v4.22+)
+- **RAM**: 8GB+ recommended
+- **Ports**: 8080, 8088, 3000, 9000, 9001, 5434
 
 ### Installation
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/JobInsight_Data_Pipeline_v2.git
+git clone https://github.com/Trantuan24/JobInsight_Data_Pipeline_v2.git
 cd JobInsight_Data_Pipeline_v2
 
 # 2. Create environment file
 cp .env.example .env
 
-# 3. Start all services (first run may take 5-10 minutes)
+# 3. Start all services (first run: 5-10 minutes)
 docker compose up -d
 
 # 4. Check service health
 docker compose ps
 ```
 
-### Access Services
+### 🌐 Access Services
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **Airflow** | [http://localhost:8080](http://localhost:8080) | admin / admin |
-| **Grafana** | [http://localhost:3000](http://localhost:3000) | admin / admin |
-| **Superset** | [http://localhost:8088](http://localhost:8088) | admin / admin |
-| **MinIO** | [http://localhost:9001](http://localhost:9001) | minioadmin / minioadmin |
+| Service | URL | Login |
+|---------|-----|-------|
+| **Airflow** - Pipeline Orchestration | [localhost:8080](http://localhost:8080) | `admin` / `admin` |
+| **Grafana** - Pipeline Monitoring | [localhost:3000](http://localhost:3000) | `admin` / `admin` |
+| **Superset** - Business Analytics | [localhost:8088](http://localhost:8088) | `admin` / `admin` |
+| **MinIO** - Object Storage Console | [localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin` |
 
-### First Run
+### ▶️ Run Your First Pipeline
 
 ```bash
-# Trigger pipeline manually (or wait until 6:00 AM)
-docker exec jobinsight-airflow-webserver-1 airflow dags trigger jobinsight_pipeline
+# Trigger main pipeline (or wait until 6:00 AM daily)
+docker exec jobinsight-airflow-webserver-1 \
+  airflow dags trigger jobinsight_pipeline
 
-# Check pipeline status
-docker exec jobinsight-airflow-webserver-1 airflow dags list-runs -d jobinsight_pipeline
+# Check status
+docker exec jobinsight-airflow-webserver-1 \
+  airflow dags list-runs -d jobinsight_pipeline
 
-# View logs
+# View real-time logs
 docker compose logs -f airflow-scheduler
 ```
+
+**Expected flow**: Crawl (2min) → Parse → Validate → Staging → DWH → Done! ✅
+
+> 💡 **First run**: Pipeline DAG (6AM) → DWH DAG (7AM). Check Grafana for metrics!
 
 ---
 
@@ -144,7 +155,7 @@ Grafana (Monitoring) + Superset (Analytics)
 
 **4 Daily DAGs**: Maintenance (3AM) → Pipeline (6AM) → DWH (7AM) → Archive (Sun 2AM)
 
-> 📖 **Details**: [ARCHITECTURE.md](docs/ARCHITECTURE.md#data-flow) | [DAG Documentation](docs/ARCHITECTURE.md#orchestration)
+> 📖 **Details**: [ARCHITECTURE](docs/ARCHITECTURE.md#data-flow) | [DAG Documentation](docs/ARCHITECTURE.md#orchestration)
 
 ---
 
