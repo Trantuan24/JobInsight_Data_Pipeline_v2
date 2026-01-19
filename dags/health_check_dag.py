@@ -47,7 +47,7 @@ def health_check_task(**kwargs):
 with DAG(
     'jobinsight_health_check',
     default_args=default_args,
-    description='Health check for PostgreSQL, MinIO, DuckDB',
+    description='Health check for PostgreSQL, MinIO, DuckDB, Grafana, Superset',
     schedule_interval='0 * * * *',  # Every hour
     start_date=datetime(2024, 1, 1),
     catchup=False,

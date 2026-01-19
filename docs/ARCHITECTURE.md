@@ -58,6 +58,7 @@
 | `jobinsight_dwh` | 7:00 AM | Staging → Dimensions → Facts → Export |
 | `jobinsight_maintenance` | 3:00 AM | Backup PostgreSQL, cleanup old files |
 | `jobinsight_archive` | Sunday 2:00 AM | Archive raw_jobs > 30 days |
+| `jobinsight_health_check` | Every hour | Check PostgreSQL, MinIO, DuckDB, Grafana, Superset |
 
 ### 3. Storage
 

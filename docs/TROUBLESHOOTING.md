@@ -241,6 +241,19 @@ docker compose up -d
 
 ## Health Checks
 
+### Health Check DAG
+
+`jobinsight_health_check` chạy mỗi giờ, kiểm tra:
+
+| Service | Check | Status |
+|---------|-------|--------|
+| PostgreSQL | Connection + data count | unhealthy nếu fail |
+| MinIO | Buckets exist | unhealthy nếu fail |
+| DuckDB | File exists on MinIO | unhealthy nếu fail |
+| Grafana | HTTP health endpoint | degraded nếu fail (optional) |
+| Superset | HTTP health endpoint | degraded nếu fail (optional) |
+
+**Manual check:**
 ```bash
 # All services
 docker compose ps
@@ -253,4 +266,10 @@ curl http://localhost:9000/minio/health/live
 
 # PostgreSQL
 docker exec jobinsight-airflow-webserver-1 pg_isready -h postgres
+
+# Grafana
+curl http://localhost:3000/api/health
+
+# Superset
+curl http://localhost:8088/health
 ```

@@ -142,6 +142,62 @@ class HealthChecker:
             logger.error(f"DuckDB health check failed: {e}")
             return {'status': 'unhealthy', 'error': str(e)}
     
+    def check_grafana(self) -> Dict[str, Any]:
+        """Check Grafana health endpoint."""
+        try:
+            with timeout(TIMEOUT_SECONDS):
+                import urllib.request
+                
+                url = 'http://grafana:3000/api/health'
+                req = urllib.request.Request(url, method='GET')
+                
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        return {
+                            'status': 'healthy',
+                            'url': 'http://localhost:3000'
+                        }
+                    else:
+                        return {
+                            'status': 'degraded',
+                            'http_status': response.status
+                        }
+        except TimeoutError:
+            logger.error("Grafana health check timed out")
+            return {'status': 'unhealthy', 'error': 'Connection timeout'}
+        except Exception as e:
+            logger.warning(f"Grafana health check failed: {e}")
+            # Grafana is optional, so degraded not unhealthy
+            return {'status': 'degraded', 'error': str(e)}
+    
+    def check_superset(self) -> Dict[str, Any]:
+        """Check Superset health endpoint."""
+        try:
+            with timeout(TIMEOUT_SECONDS):
+                import urllib.request
+                
+                url = 'http://superset:8088/health'
+                req = urllib.request.Request(url, method='GET')
+                
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        return {
+                            'status': 'healthy',
+                            'url': 'http://localhost:8088'
+                        }
+                    else:
+                        return {
+                            'status': 'degraded',
+                            'http_status': response.status
+                        }
+        except TimeoutError:
+            logger.error("Superset health check timed out")
+            return {'status': 'unhealthy', 'error': 'Connection timeout'}
+        except Exception as e:
+            logger.warning(f"Superset health check failed: {e}")
+            # Superset is optional, so degraded not unhealthy
+            return {'status': 'degraded', 'error': str(e)}
+    
     def check_all(self) -> Dict[str, Any]:
         """Run all health checks."""
         result = {
@@ -149,11 +205,14 @@ class HealthChecker:
             'services': {
                 'postgres': self.check_postgres(),
                 'minio': self.check_minio(),
-                'duckdb': self.check_duckdb()
+                'duckdb': self.check_duckdb(),
+                'grafana': self.check_grafana(),
+                'superset': self.check_superset()
             }
         }
         
         # Overall status: unhealthy > degraded > healthy
+        # Note: Grafana/Superset are optional (degraded won't fail pipeline)
         statuses = [s.get('status') for s in result['services'].values()]
         if 'unhealthy' in statuses:
             result['overall'] = 'unhealthy'
