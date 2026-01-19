@@ -51,6 +51,8 @@ x-airflow-common: &airflow-common
     - ./src:/opt/airflow/src
     - ./sql:/opt/airflow/sql
     - ./data:/opt/airflow/data
+    - ./tests:/opt/airflow/tests
+    - ./pytest.ini:/opt/airflow/pytest.ini
   # Sử dụng user airflow mặc định thay vì chỉ định UID
   # user: "1000:0"
   networks:

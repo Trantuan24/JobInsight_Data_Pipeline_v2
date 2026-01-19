@@ -1,0 +1,88 @@
+{
+    "valid_jobs": [
+        {
+            "job_id": "2008076",
+            "title": "Senior Python Developer",
+            "company_name": "FPT Software",
+            "company_url": "https://www.topcv.vn/cong-ty/fpt-software",
+            "job_url": "https://www.topcv.vn/viec-lam/senior-python-developer-2008076.html",
+            "salary": "25 - 40 triệu",
+            "location": "Hà Nội",
+            "skills": [
+                "Python",
+                "Django",
+                "PostgreSQL"
+            ],
+            "deadline": "31/01/2026",
+            "verified_employer": true,
+            "crawled_at": "2026-01-15T06:00:00"
+        },
+        {
+            "job_id": "2008077",
+            "title": "Data Engineer (AWS, Airflow)",
+            "company_name": "Công Ty TNHH VNG",
+            "company_url": "https://www.topcv.vn/cong-ty/vng",
+            "job_url": "https://www.topcv.vn/viec-lam/data-engineer-2008077.html",
+            "salary": "Thỏa thuận",
+            "location": "Hồ Chí Minh",
+            "skills": [
+                "Python",
+                "AWS",
+                "Airflow",
+                "SQL"
+            ],
+            "deadline": "15/02/2026",
+            "verified_employer": false,
+            "crawled_at": "2026-01-15T06:00:00"
+        }
+    ],
+    "invalid_jobs": [
+        {
+            "job_id": null,
+            "title": "Test Job",
+            "company_name": "Test Company"
+        },
+        {
+            "job_id": "abc123",
+            "title": "",
+            "company_name": "Test Company"
+        },
+        {
+            "job_id": "2008078",
+            "title": "Valid Title",
+            "company_name": null
+        }
+    ],
+    "titles_to_clean": [
+        {
+            "input": "Senior Python Developer - Thu Nhập Upto 40 Triệu",
+            "expected": "Senior Python Developer"
+        },
+        {
+            "input": "Backend Developer(Java, Spring Boot)",
+            "expected": "Backend Developer (Java, Spring Boot)"
+        },
+        {
+            "input": "C++ Developer - Tại Hà Nội",
+            "expected": "C++ Developer"
+        },
+        {
+            "input": ".NET Developer | Lương 30 Triệu",
+            "expected": ".NET Developer"
+        }
+    ],
+    "companies_to_clean": [
+        {
+            "input": "công ty tnhh fpt software",
+            "expected": "Công Ty TNHH FPT Software"
+        },
+        {
+            "input": "CÔNG TY CP CÔNG NGHỆ AI",
+            "expected": "Công Ty CP Công Nghệ AI"
+        },
+        {
+            "input": "vng corporation tuyển dụng",
+            "expected": "Vng Corporation"
+        }
+    ]
+}
