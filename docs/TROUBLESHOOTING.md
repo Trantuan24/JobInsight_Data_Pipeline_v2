@@ -174,13 +174,18 @@ print(results)
 ```
 
 #### Playwright errors
-```bash
-# Check browser installed
-docker exec jobinsight-airflow-webserver-1 playwright install chromium
+Playwright đã được cài sẵn trong Docker image (xem `docker/Dockerfile`).
 
-# Check dependencies
-docker exec jobinsight-airflow-webserver-1 playwright install-deps
+```bash
+# Verify Playwright installed
+docker exec jobinsight-airflow-webserver-1 python3 -c "from playwright.sync_api import sync_playwright; print('OK')"
+
+# If missing (rare), rebuild image
+docker compose build --no-cache airflow-webserver
+docker compose up -d
 ```
+
+> **Note**: KHÔNG cần chạy `playwright install` manually - đã có trong Dockerfile.
 
 ---
 

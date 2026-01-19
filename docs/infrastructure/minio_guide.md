@@ -11,6 +11,35 @@ MinIO là object storage (S3-compatible) cho JobInsight, lưu trữ HTML backups
 | Web Console | http://localhost:9001 | minioadmin / minioadmin |
 | S3 API | http://localhost:9000 | - |
 
+## Bucket Initialization
+
+Buckets được tạo tự động khi `airflow-init` chạy lần đầu:
+
+```yaml
+# docker-compose.yml
+airflow-init:
+  command: |
+    python -c "from src.storage.minio import init_minio_buckets; init_minio_buckets()"
+```
+
+**Logic trong `src/storage/minio.py`:**
+```python
+def init_minio_buckets():
+    buckets = ['jobinsight-raw', 'jobinsight-archive', 
+               'jobinsight-backup', 'jobinsight-warehouse']
+    for bucket in buckets:
+        if not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
+```
+
+**Nếu bucket bị mất:**
+```bash
+docker exec jobinsight-airflow-webserver-1 python3 -c "
+from src.storage.minio import init_minio_buckets
+init_minio_buckets()
+"
+```
+
 ## Buckets
 
 | Bucket | Mục đích | Retention |

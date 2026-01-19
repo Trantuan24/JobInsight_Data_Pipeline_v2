@@ -108,6 +108,27 @@
                    └─────────────┘    └─────────────┘
 ```
 
+### Fact Processing: Carry Forward Logic
+
+DWH sử dụng **Pure Periodic Snapshot** với carry forward:
+
+```
+Day N-1 Facts                    Day N Facts
+┌─────────────┐                  ┌─────────────┐
+│ Job A (active)│──carry forward──▶│ Job A       │
+│ Job B (active)│──carry forward──▶│ Job B       │
+│ Job C (expired)│       ✗        │             │
+└─────────────┘                  │ Job D (new) │ ◀── từ staging
+                                 └─────────────┘
+```
+
+**Logic trong `daily.py`:**
+1. **Carry forward**: Lấy tất cả jobs từ ngày hôm qua có `due_date >= today` (còn hạn), tạo fact mới cho today
+2. **Process staging**: Xử lý jobs mới crawl hôm nay từ `staging_jobs`
+3. **Skip expired**: Jobs có `due_date < today` không được carry forward
+
+**Kết quả**: Mỗi ngày có snapshot đầy đủ của TẤT CẢ jobs đang active, không chỉ jobs mới crawl.
+
 ---
 
 ## Star Schema (DuckDB)

@@ -26,10 +26,16 @@ Bus Matrix là công cụ lập kế hoạch Data Warehouse theo phương pháp 
 
 | Thuộc tính | Giá trị |
 |------------|---------|
-| **Grain** | 1 job × 1 ngày crawl |
-| **Fact Type** | Periodic Snapshot |
-| **Mô tả** | Chụp trạng thái tin tuyển dụng theo ngày crawl |
-| **Load** | Daily, 1 record/job/ngày crawl |
+| **Grain** | 1 job × 1 ngày |
+| **Fact Type** | Pure Periodic Snapshot |
+| **Mô tả** | Snapshot trạng thái TẤT CẢ jobs active mỗi ngày |
+| **Load** | Daily với carry forward |
+
+**Carry Forward Logic:**
+- Mỗi ngày, jobs còn hạn từ ngày trước được "carry forward" sang ngày mới
+- Jobs mới từ staging được thêm vào
+- Jobs hết hạn (`due_date < today`) bị loại bỏ
+- Kết quả: Mỗi ngày có đầy đủ snapshot của market, không chỉ jobs mới crawl
 
 **Foreign Keys:**
 

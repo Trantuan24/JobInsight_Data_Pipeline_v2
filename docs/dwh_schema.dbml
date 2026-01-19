@@ -51,7 +51,10 @@ Table dim_location {
     (city, country) [unique]
   }
 
-  note: "Locations dimension - City level only"
+  note: '''
+  Locations dimension - City level only
+  Default record: (-1, 'Unknown', 'Unknown')
+  '''
 }
 
 Table dim_date {

@@ -1,0 +1,122 @@
+# Data Contract: raw_jobs
+# PostgreSQL table - Entry point of pipeline
+
+name: raw_jobs
+description: Raw job postings từ crawler, chưa qua transform
+database: PostgreSQL
+schema: public
+owner: pipeline_dag
+
+columns:
+  - name: id
+    type: SERIAL
+    nullable: false
+    description: Auto-increment primary key
+
+  - name: job_id
+    type: VARCHAR(20)
+    nullable: false
+    description: Business key từ TopCV (VD: "2008076")
+
+  - name: title
+    type: VARCHAR(500)
+    nullable: true
+    description: Tiêu đề công việc (raw, chưa clean)
+
+  - name: company_name
+    type: VARCHAR(300)
+    nullable: true
+    description: Tên công ty (raw)
+
+  - name: company_url
+    type: TEXT
+    nullable: true
+    description: URL trang công ty trên TopCV
+
+  - name: logo_url
+    type: TEXT
+    nullable: true
+    description: URL logo công ty
+
+  - name: location
+    type: VARCHAR(500)
+    nullable: true
+    description: Địa điểm làm việc (có thể multi-location, separated by comma)
+
+  - name: salary
+    type: VARCHAR(200)
+    nullable: true
+    description: Salary text raw (VD: "15 - 25 triệu", "Thỏa thuận")
+
+  - name: job_url
+    type: TEXT
+    nullable: true
+    description: URL chi tiết job posting
+
+  - name: deadline
+    type: VARCHAR(100)
+    nullable: true
+    description: Deadline text raw (VD: "31/01/2026")
+
+  - name: time_remaining
+    type: VARCHAR(100)
+    nullable: true
+    description: Text "Còn X ngày để ứng tuyển"
+
+  - name: skills
+    type: JSONB
+    nullable: true
+    description: Array of skills (VD: ["Python", "SQL"])
+
+  - name: verified_employer
+    type: BOOLEAN
+    nullable: true
+    default: false
+    description: Nhà tuyển dụng đã xác thực
+
+  - name: crawled_at
+    type: TIMESTAMP
+    nullable: false
+    default: CURRENT_TIMESTAMP
+    description: Thời điểm crawl
+
+  - name: created_at
+    type: TIMESTAMP
+    nullable: false
+    default: CURRENT_TIMESTAMP
+    description: Thời điểm insert vào DB
+
+  - name: updated_at
+    type: TIMESTAMP
+    nullable: true
+    description: Thời điểm update (nếu có)
+
+constraints:
+  primary_key: id
+  unique: [job_id]  # Mỗi job_id chỉ có 1 record (upsert)
+
+indexes:
+  - name: idx_raw_jobs_job_id
+    columns: [job_id]
+  - name: idx_raw_jobs_crawled_at
+    columns: [crawled_at]
+
+retention:
+  policy: 30 days
+  archive_to: MinIO jobinsight-archive (Parquet)
+  handled_by: archive_dag.py
+
+data_flow:
+  source: TopCV crawler (pipeline_dag.py)
+  destination: staging_jobs (via staging pipeline)
+
+quality_rules:
+  - rule: job_id must be numeric string
+    sql: "SELECT COUNT(*) FROM raw_jobs WHERE job_id !~ '^[0-9]+$'"
+    threshold: 0
+  - rule: title not empty
+    sql: "SELECT COUNT(*) FROM raw_jobs WHERE title IS NULL OR title = ''"
+    threshold: "< 5%"
+  - rule: company_name not null
+    sql: "SELECT COUNT(*) FROM raw_jobs WHERE company_name IS NULL"
+    threshold: "< 1%"
