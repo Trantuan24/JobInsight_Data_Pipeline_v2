@@ -1,8 +1,5 @@
 -- ============================================
 -- JobInsight - Staging Procedures
--- Salary lưu theo VND (không chia triệu)
--- Python xử lý title_clean và company_name_standardized
--- SQL chỉ xử lý salary và deadline
 -- ============================================
 
 -- 1. Hàm chuẩn hoá lương

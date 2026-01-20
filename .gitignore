@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# DuckDB files (large binary)
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# Data files (keep structure, ignore content)
+data/
+data/*.parquet
+data/*.csv
+
+# Airflow generated
+airflow.db
+airflow-webserver.pid

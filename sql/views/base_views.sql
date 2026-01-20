@@ -1,9 +1,6 @@
 -- ============================================
 -- JobInsight - Base Dimensional Views
 -- ============================================
--- Purpose: Basic views for DuckDB warehouse
--- Database: DuckDB
--- ============================================
 
 -- ============================================
 -- VIEW: vw_current_jobs

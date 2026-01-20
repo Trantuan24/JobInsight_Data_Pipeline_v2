@@ -74,11 +74,7 @@ def _setup_schema(conn, schema_path: str = DEFAULT_SCHEMA_PATH) -> bool:
 
 
 def _get_staging_data(pg_conn_string: str, crawl_date: Optional[date] = None) -> pd.DataFrame:
-    """
-    Get staging data from PostgreSQL.
-    
-    Chỉ lấy jobs crawl ngày hôm nay (hoặc ngày chỉ định).
-    """
+    """ Get staging data from PostgreSQL """
     import psycopg2
     
     if crawl_date is None:

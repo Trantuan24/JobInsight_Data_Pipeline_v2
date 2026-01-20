@@ -11,14 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def init_dimension_caches(conn: duckdb.DuckDBPyConnection) -> Dict[str, Dict]:
-    """
-    Initialize caches for dimension lookups.
-    
-    Returns dict with:
-    - job: job_id -> job_sk
-    - company: company_bk_hash -> company_sk
-    - location: (city, country) -> location_sk
-    """
+    """ Initialize caches for dimension lookups """
     caches = {}
     
     # Job cache: job_id -> job_sk

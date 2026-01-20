@@ -17,11 +17,7 @@ def process_dim_job(
     conn: duckdb.DuckDBPyConnection,
     staging_df: pd.DataFrame
 ) -> Dict[str, int]:
-    """
-    Process DimJob with SCD Type 2 (batch processing).
-    
-    Compare columns: title, skills, job_url
-    """
+    """ Process DimJob with SCD Type 2 (batch processing) """
     stats = {'inserted': 0, 'updated': 0, 'unchanged': 0}
     today = date.today()
     

@@ -24,12 +24,7 @@ COMPANY_ABBR = {
 
 
 def clean_title(title: str) -> str:
-    """
-    Làm sạch tiêu đề công việc:
-    - Loại bỏ thông tin salary, location
-    - Giữ nguyên tech stack trong ngoặc
-    - Giữ các ký tự đặc biệt quan trọng (C++, C#, .NET)
-    """
+    """ Làm sạch tiêu đề công việc """
     if pd.isna(title) or not title:
         return ""
     
@@ -86,11 +81,7 @@ def clean_title(title: str) -> str:
 
 
 def clean_company_name(name: str) -> str:
-    """
-    Chuẩn hóa tên công ty:
-    - Chuẩn hóa viết hoa/thường
-    - Giữ nguyên tên riêng và từ viết tắt
-    """
+    """ Chuẩn hóa tên công ty """
     if pd.isna(name) or not name:
         return ""
     

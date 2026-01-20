@@ -1,10 +1,6 @@
 -- ============================================
 -- JobInsight - Business Logic Views
 -- ============================================
--- Purpose: Views with business logic built-in
--- Database: DuckDB
--- Source of truth for analytics queries
--- ============================================
 
 -- ============================================
 -- VIEW: vw_jobs_today

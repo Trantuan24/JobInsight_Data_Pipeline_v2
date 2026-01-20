@@ -1,12 +1,6 @@
 -- ============================================
 -- JobInsight - Data Warehouse Schema (DuckDB)
 -- ============================================
--- Purpose: Star Schema for analytics
--- Database: DuckDB
--- Storage: MinIO (bucket: jobinsight-warehouse)
--- Version: 3.0
--- Note: This script is idempotent - safe to run multiple times
--- ============================================
 
 -- ============================================
 -- DROP EXISTING OBJECTS (for clean re-run)

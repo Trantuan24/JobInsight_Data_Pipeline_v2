@@ -17,14 +17,7 @@ def process_dim_date(
     staging_df: pd.DataFrame = None,
     projection_days: int = 5
 ) -> Dict[str, int]:
-    """
-    Process DimDate based on actual data dates.
-    
-    Logic:
-    - min_date = MIN(posted_time, due_date, crawled_at) from staging
-    - max_date = MAX(..., today + projection_days)
-    - Data-driven and auto-expands when new data arrives
-    """
+    """ Process DimDate based on actual data dates """
     stats = {'inserted': 0, 'unchanged': 0}
     
     today = date.today()

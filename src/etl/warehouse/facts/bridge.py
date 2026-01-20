@@ -1,10 +1,4 @@
-"""
-FactJobLocationBridge processor.
-
-Design: Pure Periodic Snapshot
-- Chỉ tạo bridges cho facts của ngày hôm nay
-- KHÔNG tạo bridges cho projected records (vì không còn projected)
-"""
+""" FactJobLocationBridge processor """
 
 import logging
 from datetime import date, timedelta

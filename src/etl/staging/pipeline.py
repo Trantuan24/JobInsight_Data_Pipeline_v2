@@ -11,14 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_staging_pipeline() -> Dict[str, Any]:
-    """
-    Run staging ETL pipeline:
-    1. Pandas: Clean title, company_name
-    2. SQL procedures: Parse salary, deadline
-    
-    Returns:
-        Dict with pipeline results
-    """
+    """ Run staging ETL pipeline """
     logger.info("Starting staging ETL pipeline...")
     
     conn = None
