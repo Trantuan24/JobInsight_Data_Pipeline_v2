@@ -173,6 +173,35 @@ Grafana (Monitoring) + Superset (Analytics)
 
 ---
 
+## 📊 Monitoring Dashboards
+
+### Grafana - Pipeline Monitoring
+
+Real-time monitoring of ETL pipeline performance and data quality metrics.
+
+#### Pipeline Metrics Dashboard
+![Grafana Pipeline Metrics](images/grafana_pipeline_metrics.png)
+
+**Tracks:**
+- ETL execution metrics (success rate, duration, rows processed)
+- Task-level performance (crawl, parse, transform, load)
+- Pipeline health over time
+- Resource utilization
+
+#### Data Quality Dashboard
+![Grafana Data Quality](images/grafana_data_quality.png)
+
+**Monitors:**
+- Validation success rates (Crawl → Business Rules → Staging)
+- Quality gate violations by type
+- Data completeness metrics
+- Anomaly detection alerts
+
+> 💡 **Access**: [localhost:3000](http://localhost:3000) (admin/admin)  
+> 📖 **Setup Guide**: [Grafana & Superset](docs/infrastructure/grafana_superset_guide.md)
+
+---
+
 ## 📚 Documentation
 
 ### Core Documentation
