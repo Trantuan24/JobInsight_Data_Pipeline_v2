@@ -197,7 +197,22 @@ Real-time monitoring of ETL pipeline performance and data quality metrics.
 - Data completeness metrics
 - Anomaly detection alerts
 
-> 💡 **Access**: [localhost:3000](http://localhost:3000) (admin/admin)  
+### Apache Superset - Business Intelligence
+
+IT job market analytics with interactive charts and KPI tracking.
+
+#### IT Job Market Overview Dashboard
+![Superset IT Job Market Dashboard](images/superset_dashboard_it_job_market.jpg)
+
+**Charts:**
+- Total Active Jobs (KPI)
+- New Jobs Today (KPI)
+- Average Salary (KPI)
+- Top 10 Hiring Companies (Bar Chart)
+- Job Trends Over Time (Line Chart)
+- Jobs by Location Distribution
+
+> 💡 **Access**: Grafana [localhost:3000](http://localhost:3000) • Superset [localhost:8088](http://localhost:8088) (admin/admin)  
 > 📖 **Setup Guide**: [Grafana & Superset](docs/infrastructure/grafana_superset_guide.md)
 
 ---
